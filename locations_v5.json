@@ -1,0 +1,1272 @@
+// ================= DATA =================
+const LOCATIONS=/*__LOCATIONS__*/;
+const GROUPS=/*__GROUPS__*/;
+const MUNIS=/*__MUNIS__*/;
+const CITIES=/*__CITIES__*/;
+const WEIGHTS=/*__WEIGHTS__*/;
+const GRAPH=/*__GRAPH__*/;
+const BUILD=/*__BUILD__*/;
+// ================ CONFIG ================
+const CFG={
+ colors:{market:{CZ:'#2c66ad',SK:'#c05a35',CH:'#3f9d5c',AT:'#6b4fa0'},
+  own:{'Private / Family':'#7a5aa3','OEM-captive':'#c07a1e','International group':'#2c66ad','Independent':'#3f9d5c','Other':'#8a97a3'},
+  cn:{yes:'#a13c22',no:'#9aa8b3'},
+  prio:{'A':'#008CC8','B':'#6fb8dc','C':'#c07a1e','–':'#9aa8b3'}},
+ labels:{market:{CZ:'Czech Republic',SK:'Slovakia',CH:'Switzerland',AT:'Austria'},cn:{yes:'Chinese brands',no:'No Chinese brands'}},
+ heatStops:[{t:0,c:[143,208,234],a:0},{t:.25,c:[143,208,234],a:.45},{t:.5,c:[0,140,200],a:.6},{t:.75,c:[245,197,66],a:.8},{t:1,c:[242,84,45],a:.92}],
+ popStops:[{t:0,c:[247,224,138],a:0},{t:.2,c:[247,224,138],a:.5},{t:.45,c:[237,169,78],a:.68},{t:.68,c:[217,95,43],a:.8},{t:.86,c:[168,35,29],a:.88},{t:1,c:[92,15,20],a:.95}],
+ catch:{color:'#008CC8',weight:1,opacity:.45,fillColor:'#008CC8',fillOpacity:.05},
+ view:{center:[48.35,12.7],zoom:6}};
+const $=id=>document.getElementById(id);
+// ---- in-platform modal system (replaces browser alert/confirm/prompt) ----
+const ui=(()=>{
+ let resolver=null;
+ function open(cfg){
+  return new Promise(res=>{
+   resolver=res;
+   $('uiTitle').textContent=cfg.title||'Confirm';
+   $('uiMsg').textContent=cfg.msg||'';
+   $('uiInput').style.display=cfg.input==='text'?'':'none';
+   $('uiArea').style.display=cfg.input==='area'?'':'none';
+   if(cfg.input==='text'){$('uiInput').value=cfg.value||'';}
+   if(cfg.input==='area'){$('uiArea').value=cfg.value||'';}
+   $('uiCancel').style.display=cfg.noCancel?'none':'';
+   $('uiOk').textContent=cfg.ok||'OK';
+   $('uiOk').classList.toggle('danger',!!cfg.danger);
+   $('uiDlg').showModal();
+   setTimeout(()=>{if(cfg.input==='text')$('uiInput').select();if(cfg.input==='area')$('uiArea').focus();},40);});}
+ function done(v){if(resolver){const r=resolver;resolver=null;$('uiDlg').close();r(v);}}
+ $('uiOk').onclick=()=>{
+  const inp=$('uiInput').style.display!=='none'?$('uiInput').value:
+   ($('uiArea').style.display!=='none'?$('uiArea').value:true);
+  done(inp);};
+ $('uiCancel').onclick=()=>done($('uiInput').style.display!=='none'||$('uiArea').style.display!=='none'?null:false);
+ $('uiDlg').addEventListener('cancel',e=>{e.preventDefault();done($('uiInput').style.display!=='none'||$('uiArea').style.display!=='none'?null:false);});
+ $('uiInput').addEventListener('keydown',e=>{if(e.key==='Enter')$('uiOk').click();});
+ return{
+  alert:(msg,title)=>open({msg,title:title||'Note',noCancel:true}),
+  confirm:(msg,opt)=>open({msg,title:(opt&&opt.title)||'Confirm',danger:opt&&opt.danger,ok:(opt&&opt.ok)||'OK'}),
+  prompt:(msg,value,opt)=>open({msg,value,input:'text',title:(opt&&opt.title)||'Input',ok:(opt&&opt.ok)||'Save'}),
+  promptArea:(msg,value,opt)=>open({msg,value,input:'area',title:(opt&&opt.title)||'Edit',ok:(opt&&opt.ok)||'Save'})};})();
+// ================ WORKSPACE (schema 2) ================
+const WS_KEY='dnp_workspace_v1',BK_KEY='dnp_workspace_backup';
+function newScenario(name){return{name,places:[],bands:{a:3,b:5}};}
+function newCase(name,markets,brands){return{id:'c'+Date.now()+Math.floor(Math.random()*999),
+ name,markets,brands:brands||[],scenarios:[newScenario('Scenario 1')],activeSc:0,seq:1,locked:[],plan:{...PLAN_DEF}};}
+const UI_DEF={base:'Light',dim:0,glass:'2',T:30,measure:'scenario',colorBy:'market',weight:false,
+ heat:false,hBw:10,hOp:80,pop:false,pBw:8,pOp:85,catch:false,radius:30,drive:false,white:false,cities:true,graph:false};
+const PLAN_DEF={oObj:'maxcov',oN:8,oPct:80,oSpace:0,oMinD:0,oSrc:'towns',oLive:false,
+ aCn:'ignore',aPrio:'any',aMust:'',aMustNot:'',aMaxG:0};
+let WS={schema:2,cases:[newCase('All markets',['CZ','SK','CH','AT'],[])],active:0,dbEdits:{},exclLocs:[],brands:['Brand A','Brand B','Brand C'],funnel:{},funnelLog:[],gates:{},
+ customGroups:[],customLocs:[],customSeq:1,ui:{...UI_DEF}};
+function migrate(w){
+ if(w.schema===2){w.ui=Object.assign({...UI_DEF},w.ui||{});
+  w.brands=w.brands||['Brand A','Brand B','Brand C'];w.funnel=w.funnel||{};w.funnelLog=w.funnelLog||[];w.gates=w.gates||{};
+  w.customGroups=w.customGroups||[];w.customLocs=w.customLocs||[];w.customSeq=w.customSeq||1;
+  w.cases.forEach(c=>{c.plan=Object.assign({...PLAN_DEF},c.plan||{});
+   c.scenarios.forEach(sc=>sc.bands=Object.assign({a:3,b:5},sc.bands||{}));});
+  return w;}
+ if(w.schema===1){ // points -> places
+  w.cases.forEach(c=>{c.locked=c.locked||[];c.scenarios.forEach(sc=>{
+   sc.places=(sc.points||[]).map(p=>({id:p.id,name:p.name,lat:p.lat,lon:p.lon,
+    state:p.ref?'assigned':'open',assigned:p.ref||null,alternatives:[],greenfield:!p.ref}));
+   delete sc.points;});});
+  w.schema=2;return migrate(w);}
+ return null;}
+try{const s=migrate(JSON.parse(localStorage.getItem(WS_KEY)));
+ if(s&&Array.isArray(s.cases)&&s.cases.length)WS=s;}catch(e){}
+let saveT=null;
+function saveNow(){try{localStorage.setItem(WS_KEY,JSON.stringify(WS));}catch(e){}}
+function save(){clearTimeout(saveT);saveT=setTimeout(saveNow,300);}
+window.addEventListener('beforeunload',()=>{clearTimeout(saveT);saveNow();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(saveT);saveNow();}});
+function backup(){try{localStorage.setItem(BK_KEY,JSON.stringify(WS));}catch(e){}}
+function C(){return WS.cases[WS.active];}
+function activeSc(){return C().scenarios[C().activeSc];}
+function prio(g){return (WS.dbEdits[g]&&WS.dbEdits[g].priority)||'–';}
+// ===== dealer funnel (group-level with location override) =====
+const STAGES=['prospect','contacted','pitched','LOI','contracted','live','declined'];
+const STAGE_COL={prospect:'#9AA7B1',contacted:'#5B9BD5',pitched:'#2C66AD',LOI:'#B8860B',contracted:'#2C7A4B',live:'#00CD55',declined:'#C05A35'};
+let lens=-1; // -1 = all brands, else index into WS.brands
+function effStage(l,b){
+ const lo=WS.funnel['l:'+l.id];if(lo&&lo[b]&&lo[b].s)return lo[b].s;
+ const go=WS.funnel['g:'+l.group];if(go&&go[b]&&go[b].s)return go[b].s;
+ return null;}
+function setStage(key,b,s){
+ const cur=(WS.funnel[key]&&WS.funnel[key][b]&&WS.funnel[key][b].s)||null;
+ if(cur===s)return;
+ WS.funnel[key]=WS.funnel[key]||{};
+ if(s)WS.funnel[key][b]={s,d:new Date().toISOString().slice(0,10)};
+ else delete WS.funnel[key][b];
+ WS.funnelLog.push([Date.now(),key,b,cur,s||null]);
+ save();render();renderDrawer&&renderDrawer();updateKPI();}
+window.fnSet=(scope,ident,b,s)=>{setStage((scope==='g'?'g:':'l:')+ident,b,s||null);};
+function renderLens(){
+ const el=$('lensBar');if(!el)return;
+ let h='<span class="lens'+(lens<0?' on':'')+'" data-b="-1">All brands</span>';
+ WS.brands.forEach((n,i)=>h+=`<span class="lens${lens===i?' on':''}" data-b="${i}">${n}</span>`);
+ h+='<span class="lens" data-b="edit" title="Rename program brands">✎</span>';
+ el.innerHTML=h;
+ el.querySelectorAll('.lens').forEach(c=>c.onclick=()=>{
+  if(c.dataset.b==='edit'){
+   WS.brands=WS.brands.map((n,i)=>prompt('Name of program brand '+(i+1)+':',n)||n);
+   save();renderLens();renderDrawer&&renderDrawer();return;}
+  lens=+c.dataset.b;renderLens();render();updateKPI();});}
+function contractedIds(b){ // dealers with stage >= contracted for brand b
+ const ok=new Set(['contracted','live']);const ids=[];
+ for(const l of LOCATIONS){const s=effStage(l,b);if(s&&ok.has(s))ids.push(l.id);}
+ return ids;}
+function ovr(g,k,src){const e=WS.dbEdits[g];return (e&&e[k]!=null&&e[k]!=='')?e[k]:(src||'');}
+function eAccess(l){return ovr(l.group,'access',l.access);}
+function eComment(l){return ovr(l.group,'comment',l.comment);}
+function setEdit(g,k,v){WS.dbEdits[g]=WS.dbEdits[g]||{};WS.dbEdits[g][k]=v;save();}
+window.editComment=async(g)=>{const cur=ovr(g,'comment',(GROUPS.find(x=>x.name===g)||{}).comment||(LOCATIONS.find(x=>x.group===g)||{}).comment||'');
+ const v=await ui.promptArea('Comment is stored in the workspace as an override; the Excel stays untouched.',cur,{title:'💬 '+g.slice(0,44)});
+ if(v!==null){setEdit(g,'comment',v);render();renderDrawer();
+  if($('dirSheet').classList.contains('on'))buildDir();}};
+function lockedIds(){C().locked=C().locked||[];return C().locked;}
+const locById={};LOCATIONS.forEach(l=>locById[l.id]=l);
+// ================ MAP ================
+const map=L.map('map',{zoomControl:false,zoomSnap:0.25,zoomDelta:0.25,wheelPxPerZoomLevel:90}).setView(CFG.view.center,CFG.view.zoom);
+L.control.zoom({position:'bottomleft'}).addTo(map);
+const BASES={Light:L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{attribution:'© OpenStreetMap © CARTO',maxZoom:19,crossOrigin:'anonymous'}),
+ Satellite:L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'Imagery © Esri',maxZoom:19,crossOrigin:'anonymous'})};
+let baseName=WS.ui.base||'Light';BASES[baseName].addTo(map);
+['Light','Satellite'].forEach(n=>{const c=document.createElement('span');c.className='chip'+(n===baseName?' on':'');
+ c.textContent=n;c.onclick=()=>{if(n===baseName)return;map.removeLayer(BASES[baseName]);baseName=n;BASES[n].addTo(map);
+ [...$('baseSel').children].forEach(x=>x.classList.toggle('on',x.textContent===n));WS.ui.base=n;save();};$('baseSel').appendChild(c);});
+function applyDim(v){map.getPane('tilePane').style.filter=v?`brightness(${1-v/100})`:'';document.body.classList.toggle('dimmed',v>=35);$('dimVal').textContent=v+'%';}
+$('dim').value=WS.ui.dim||0;applyDim(WS.ui.dim||0);
+$('dim').oninput=e=>{WS.ui.dim=+e.target.value;applyDim(WS.ui.dim);save();};
+document.body.dataset.glass=WS.ui.glass||'2';
+document.querySelectorAll('#glassSel .chip').forEach(c=>{
+ c.classList.toggle('on',c.dataset.g===(WS.ui.glass||'2'));
+ c.onclick=()=>{document.querySelectorAll('#glassSel .chip').forEach(x=>x.classList.remove('on'));
+  c.classList.add('on');document.body.dataset.glass=c.dataset.g;WS.ui.glass=c.dataset.g;save();};});
+$('setBtn').onclick=()=>{$('buildInfo').textContent=`Data build ${BUILD.built} · ${BUILD.locations} locations · ${BUILD.munis} demand municipalities. Disclaimer: see ⚠ in the Analysis card.`;$('setDlg').showModal();};
+$('anaWarn').onclick=()=>$('discDlg').showModal();
+/*@DENSITY@*/
+/*@ENGINE@*/
+/*@DISC@*/
+const isoLayer=new DiscLayer({mode:'bands'});
+const whiteBase=new DiscLayer({mode:'veil',veil:'rgba(35,48,60,.42)'});
+// precomputed graph links per dealer location
+const LOCLINKS={};LOCATIONS.forEach(l=>LOCLINKS[l.id]=ENG.links(l.lat,l.lon));
+// ---- custom (user-created) groups & locations ----
+const CN_SET=new Set(['byd','mg','omoda','jaecoo','gwm','ora','wey','leapmotor','xpeng','nio','aiways','dfsk','maxus',
+ 'lynk & co','zeekr','hongqi','chery','dongfeng','jac','seres','voyah','skywell','geely','kgm','exeed','forthing']);
+function integrateLoc(cl){
+ if(locById[cl.id])return;
+ LOCATIONS.push(cl);locById[cl.id]=cl;LOCLINKS[cl.id]=ENG.links(cl.lat,cl.lon);}
+function integrateGroup(cg){if(!GROUPS.some(g=>g.name===cg.name))GROUPS.push(cg);}
+(WS.customGroups=WS.customGroups||[]).forEach(integrateGroup);
+(WS.customLocs=WS.customLocs||[]).forEach(integrateLoc);
+WS.customSeq=WS.customSeq||1;
+window.addCustomGroup=g=>{g.custom=true;WS.customGroups.push(g);integrateGroup(g);save();};
+window.addCustomLocation=d=>{
+ const gm=GROUPS.find(g=>g.name===d.group);
+ const cn=gm?gm.cn:d.brands.some(b=>CN_SET.has(b.toLowerCase()));
+ const cl={id:900000+WS.customSeq++,custom:true,precision:'user',
+  group:d.group,market:d.market,city:d.city,address:d.address||'',brands:d.brands,
+  lat:+d.lat,lon:+d.lon,dtype:d.dtype,own:gm?gm.own:'Independent',
+  cn,cnDetail:cn?(gm?gm.cnDetail:'Yes ('+d.brands.filter(b=>CN_SET.has(b.toLowerCase())).join(', ')+')'):'No',
+  access:gm?gm.access:'',comment:gm?gm.comment:''};
+ WS.customLocs.push(cl);integrateLoc(cl);
+ rebuildGroupMeta();syncGroups();render();save();return cl;};
+window.removeCustomLocation=id=>{
+ WS.customLocs=WS.customLocs.filter(l=>l.id!==id);
+ const i=LOCATIONS.findIndex(l=>l.id===id);if(i>=0)LOCATIONS.splice(i,1);
+ delete locById[id];delete LOCLINKS[id];
+ WS.exclLocs=WS.exclLocs.filter(x=>x!==id);
+ WS.cases.forEach(c=>{c.locked=(c.locked||[]).filter(x=>x!==id);
+  c.scenarios.forEach(sc=>sc.places.forEach(p=>{
+   if(p.assigned===id){p.assigned=null;p.state=p.suggested&&p.suggested!==id?'short':'open';}
+   if(p.suggested===id)p.suggested=null;
+   p.alternatives=(p.alternatives||[]).filter(a=>a!==id);}));});
+ rebuildGroupMeta();syncGroups();render();renderPlaces();save();};
+window.removeCustomGroup=async name=>{
+ if(LOCATIONS.some(l=>l.group===name)){ui.alert('This group still has locations. Remove them first.');return;}
+ WS.customGroups=WS.customGroups.filter(g=>g.name!==name);
+ const i=GROUPS.findIndex(g=>g.name===name&&g.custom);if(i>=0)GROUPS.splice(i,1);
+ save();buildDir();};
+// ================ state ================
+const state={mode:0,colorBy:'market',q:'',market:new Set(),own:new Set(['Private / Family','OEM-captive','International group','Independent','Other']),
+ cn:'all',prios:new Set(['A','B','C','–']),brands:new Set(),groups:new Set(),dtype:new Set(['group','independent']),
+ heat:false,hBw:10,hOp:.8,pop:false,pBw:8,pOp:.85,weight:false,catch:false,radius:30,drive:false,cities:true,plan:false,
+ T:WS.ui.T||30,measure:WS.ui.measure||'scenario',white:false,cmp:-1,placeSel:null};
+$('tT').value=state.T;$('tTv').textContent=state.T+' min';$('kpiMeasure').value=state.measure;renderLens();
+function activeFilterList(){
+ const f=[];
+ if(state.q)f.push(['q','Search: "'+state.q.slice(0,16)+'"',()=>{state.q='';$('q').value='';}]);
+ state.market.forEach(m=>f.push(['mk'+m,m,()=>state.market.delete(m)]));
+ if(state.dtype.size===1)f.push(['dt',[...state.dtype][0]==='group'?'Groups only':'Independents only',()=>{state.dtype=new Set(['group','independent']);}]);
+ if(state.cn!=='all')f.push(['cn','CN: '+state.cn,()=>state.cn='all']);
+ if(state.prios.size<4)f.push(['pr','Priority: '+[...state.prios].join('/'),()=>state.prios=new Set(['A','B','C','–'])]);
+ if(state.own.size<5)f.push(['ow','Ownership: '+state.own.size+' of 5',()=>state.own=new Set(['Private / Family','OEM-captive','International group','Independent','Other'])]);
+ if(state.brands.size)f.push(['br','Brands: '+state.brands.size,()=>state.brands.clear()]);
+ if(state.groups.size)f.push(['gr','Groups: '+state.groups.size,()=>state.groups.clear()]);
+ return f;}
+function renderActiveChips(){
+ const el=$('activeChips');if(!el)return;
+ const f=activeFilterList();
+ // section badges
+ const bo=$('bOwn'),bb=$('bBrand'),bg=$('bGroup');
+ if(bo)bo.textContent=state.own.size<5?state.own.size+' of 5':'';
+ if(bb)bb.textContent=state.brands.size?state.brands.size+' selected':'';
+ if(bg)bg.textContent=state.groups.size?state.groups.size+' selected':'';
+ if(!f.length){el.style.display='none';el.innerHTML='';return;}
+ el.style.display='flex';el.style.flexWrap='wrap';el.style.gap='5px';
+ el.innerHTML=f.map(([id,lab])=>`<span class="chip" data-af="${id}">${lab} ✕</span>`).join('')
+  +`<span class="chip reset" data-af="__reset">Reset all</span>`;
+ el.querySelectorAll('[data-af]').forEach(c=>c.onclick=()=>{
+  const id=c.dataset.af;
+  if(id==='__reset'){f.forEach(([,,undo])=>undo());}
+  else{const hit=f.find(x=>x[0]===id);if(hit)hit[2]();}
+  syncFilterUI();render();});}
+function syncFilterUI(){ // re-sync chip/checkbox visuals after programmatic filter change
+ document.querySelectorAll('#fMarket .chip').forEach(c=>c.classList.toggle('on',state.market.size===0||state.market.has(c.textContent.trim())));
+ document.querySelectorAll('#fType .chip').forEach(c=>{const v=c.textContent.includes('group')||c.textContent.includes('Group')?'group':'independent';c.classList.toggle('on',state.dtype.has(v));});
+ document.querySelectorAll('#fPrio .chip').forEach(c=>c.classList.toggle('on',state.prios.has(c.textContent.trim())));
+ document.querySelectorAll('#fCn .chip').forEach(c=>c.classList.toggle('on',c.dataset.v===state.cn));
+ document.querySelectorAll('#fOwn .chip').forEach(c=>c.classList.toggle('on',state.own.has(c.dataset.v||c.textContent.trim())));
+ document.querySelectorAll('#fBrand input').forEach(i=>i.checked=state.brands.has(i.value));
+ document.querySelectorAll('#fGroup input').forEach(i=>i.checked=state.groups.has(i.value));}
+function inCase(l){return C().markets.includes(l.market);}
+function passes(l){
+ if(!inCase(l))return false;
+ if(state.market.size&&!state.market.has(l.market))return false;
+ if(!state.dtype.has(l.dtype))return false;
+ if(!state.own.has(l.own))return false;
+ if(state.cn==='yes'&&!l.cn)return false;if(state.cn==='no'&&l.cn)return false;
+ if(!state.prios.has(prio(l.group)))return false;
+ if(state.brands.size&&!l.brands.some(b=>state.brands.has(b)))return false;
+ if(state.groups.size&&!state.groups.has(l.group))return false;
+ if(state.q){const q=state.q.toLowerCase();
+  if(!(l.group.toLowerCase().includes(q)||l.city.toLowerCase().includes(q)||l.brands.join(' ').toLowerCase().includes(q)))return false;}
+ return true;}
+let filtered=[];
+function colorFor(l){const c=CFG.colors;
+ if(state.colorBy==='market')return c.market[l.market];
+ if(state.colorBy==='own')return c.own[l.own]||'#888';
+ if(state.colorBy==='prio')return c.prio[prio(l.group)];
+ if(state.colorBy==='funnel'){
+  if(lens<0)return '#C9D2D9';
+  const s=effStage(l,lens);return s?STAGE_COL[s]:'#E1E7EB';}
+ return l.cn?c.cn.yes:c.cn.no;}
+// ================ layers ================
+const cluster=L.markerClusterGroup({maxClusterRadius:44,disableClusteringAtZoom:11,
+ iconCreateFunction:c=>L.divIcon({html:`<div style="background:#008CC8;color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)">${c.getChildCount()}</div>`,className:'',iconSize:[34,34]})}).addTo(map);
+const ghostLayer=L.layerGroup().addTo(map);
+const catchLayer=L.layerGroup();
+const cityLayer=L.layerGroup().addTo(map);
+const placesLayer=L.layerGroup().addTo(map);
+const areaLayer=new DiscLayer({mode:'bands'});
+function popupHtml(l){
+ const brands=l.brands.map(b=>`<span class="tag">${b}</span>`).join('');
+ const cn=l.cn?`<span class="tag cn" title="${(l.cnDetail||'').replace(/"/g,'&quot;')}">Chinese: yes</span>`:'';
+ const acc=eAccess(l),com=eComment(l);
+ const extra=[acc?('Access: '+acc):null,l.dtype==='independent'?'Independent dealer':null].filter(Boolean).join(' · ');
+ return `<h3>${l.group}</h3><div class="meta">${l.city} · ${CFG.labels.market[l.market]}<br>${l.address}<br>${l.own} · Priority ${prio(l.group)}${l.precision==='city'?' · <i>city-level</i>':''}${extra?'<br>'+extra:''}</div>
+ <div>${brands}${cn}</div>${com?`<div class="meta" style="margin-top:5px">💬 ${com.slice(0,160)}</div>`:''}<div class="popbtns">
+ <button onclick="editComment('${l.group.replace(/'/g,"\\'")}')">💬 ${com?'Edit':'Add'} comment</button>
+ <button onclick="filterGroup('${l.group.replace(/'/g,"\\'")}')">Only this group</button>
+ <button onclick="toggleLock(${l.id})">${lockedIds().includes(l.id)?'📌 Unlock':'📌 Lock as partner'}</button>
+ <button onclick="placeHere(${l.id})">＋ Place here</button></div>
+ <div style="margin-top:7px;border-top:1px solid #E3E8EC;padding-top:5px">
+  <div style="font-size:10px;font-weight:700;color:#7C8A97">FUNNEL
+   <label style="font-weight:400;margin-left:6px"><input type="radio" name="fsc${l.id}" value="g" checked> whole group</label>
+   <label style="font-weight:400"><input type="radio" name="fsc${l.id}" value="l"> this location</label></div>
+  ${WS.brands.map((bn,b)=>{const eff=effStage(l,b)||'';
+   const ovr2=WS.funnel['l:'+l.id]&&WS.funnel['l:'+l.id][b]&&WS.funnel['l:'+l.id][b].s;
+   return `<div class="fnrow"><span style="width:64px;font-size:11px">${bn}${ovr2?' <span title="location override">*</span>':''}</span>
+    <select onchange="fnSet(document.querySelector('input[name=fsc${l.id}]:checked').value,document.querySelector('input[name=fsc${l.id}]:checked').value==='g'?'${l.group.replace(/'/g,"\\'")}':${l.id},${b},this.value)">
+    <option value="">—</option>${STAGES.map(s=>`<option${s===eff?' selected':''}>${s}</option>`).join('')}</select></div>`;}).join('')}
+ </div>`;}
+window.filterGroup=g=>{state.groups=new Set([g]);syncGroups();render();};
+window.toggleLock=id=>{const L2=lockedIds();const i=L2.indexOf(id);
+ if(i>=0)L2.splice(i,1);else L2.push(id);save();render();renderDrawer();};
+window.placeHere=id=>{const l=locById[id];if(!l)return;
+ const p=addPlace(l.lat,l.lon,{name:l.city});p.assigned=l.id;p.state='assigned';
+ map.closePopup();setSeg(2);selectPlace(p.id);};
+function render(){
+ filtered=LOCATIONS.filter(passes);
+ const inC=LOCATIONS.filter(inCase).length;
+ $('counter').textContent=`${filtered.length} of ${inC} locations shown (case) · ${LOCATIONS.length} total`;
+ renderActiveChips();
+ cluster.clearLayers();ghostLayer.clearLayers();
+ filtered.forEach(l=>{
+  const m=L.marker([l.lat,l.lon],{icon:L.divIcon({className:'',iconSize:[13,13],iconAnchor:[7,7],
+   html:`<div class="pin${lockedIds().includes(l.id)?' locked':''}" style="background:${colorFor(l)}"></div>`})});
+  m.bindPopup(popupHtml(l),{maxWidth:300});
+  m.on('mouseover',()=>{if(state.drive)graphIso(l.lat,l.lon,`${l.group} — ${l.city}`);});
+  m.on('mouseout',()=>{if(state.drive)hideIso();});
+  cluster.addLayer(m);});
+ LOCATIONS.filter(l=>!inCase(l)).forEach(l=>{
+  ghostLayer.addLayer(L.marker([l.lat,l.lon],{interactive:false,zIndexOffset:-800,
+   icon:L.divIcon({className:'',iconSize:[9,9],iconAnchor:[5,5],html:'<div class="pin ghost"></div>'})}));});
+ if(state.heat){dealerHeat.o.bwKm=state.hBw;dealerHeat.o.opacity=state.hOp;
+  dealerHeat.setData(filtered.map(l=>[l.lat,l.lon,1]));
+  if(!map.hasLayer(dealerHeat))dealerHeat.addTo(map);}
+ else if(map.hasLayer(dealerHeat))map.removeLayer(dealerHeat);
+ catchLayer.clearLayers();
+ if(state.catch){filtered.forEach(l=>catchLayer.addLayer(L.circle([l.lat,l.lon],{radius:state.radius*1000,...CFG.catch,interactive:false})));
+  if(!map.hasLayer(catchLayer))catchLayer.addTo(map);}else map.removeLayer(catchLayer);
+ renderLegend();updateKPI();}
+function renderPop(){
+ if(!state.pop){if(map.hasLayer(popHeat))map.removeLayer(popHeat);return;}
+ popHeat.o.bwKm=state.pBw;popHeat.o.opacity=state.pOp;popHeat.o.gamma=.42;
+ popHeat.setData(ENG.DM.filter(m=>C().markets.includes(m.c)).map(m=>[m.lat,m.lon,m.w*(state.weight?m.rw:1)]));
+ if(!map.hasLayer(popHeat))popHeat.addTo(map);}
+function renderCities(){
+ cityLayer.clearLayers();if(!state.cities)return;
+ CITIES.filter(c=>C().markets.includes(c.c)).forEach(c=>{
+  const d=8+Math.min(14,Math.sqrt(c.pop/1000)/2);
+  cityLayer.addLayer(L.marker([c.lat,c.lon],{interactive:false,zIndexOffset:-500,
+   icon:L.divIcon({className:'',iconSize:[d,d],iconAnchor:[d/2,d/2],
+   html:`<div class="citydot" style="width:${d}px;height:${d}px"></div><div class="citylab">${c.name} · ${Math.round(c.pop/1000)}k</div>`})}));});}
+function renderLegend(){
+ const c=CFG.colors[state.colorBy];const lab=k=>CFG.labels[state.colorBy]?.[k]||k;
+ let h='';for(const k in c)h+=`<span class="li"><span class="dot" style="background:${c[k]}"></span>${lab(k)}</span>`;
+ h+=`<span class="li"><span class="plc assigned" style="width:12px;height:12px;border-width:1.5px"></span>Place</span>`;
+ $('legend').innerHTML=h;}
+// road-network debug layer
+const graphLayer=L.layerGroup();let graphBuilt=false;
+function buildGraphLayer(){
+ if(graphBuilt)return;graphBuilt=true;
+ const CLS={mw:['#7a5aa3',3.2,.85],ex:['#2c66ad',2.6,.8],main:['#3f9d5c',1.8,.75],
+            alp:['#c07a1e',1.8,.85],pass:['#a13c22',2.2,.9],acc:['#8a97a3',.8,.45]};
+ const NL={};for(const k in GRAPH.nodes){const v=GRAPH.nodes[k];NL[v.id]=[v.lat,v.lon];}
+ for(const[a,b,w,cls]of GRAPH.edges){const st=CLS[cls]||CLS.acc;
+  graphLayer.addLayer(L.polyline([NL[a],NL[b]],{color:st[0],weight:st[1],opacity:st[2],interactive:false}));}}
+// ================ coverage / analysis ================
+function scenarioSites(sc){return (sc||activeSc()).places.map(p=>[p.lat,p.lon]);}
+function kpiSites(){
+ const m=state.measure;let s=[];
+ if(lens>=0&&(m==='existing'||m==='both')){
+  const cid=new Set(contractedIds(lens));
+  const ex=filtered.filter(l=>cid.has(l.id)).map(l=>[l.lat,l.lon]);
+  if(m==='existing')return ex;
+  return ex.concat(scenarioSites());} // both: contracted + planned places
+ if(m!=='existing')s=s.concat(scenarioSites());
+ if(m!=='scenario')s=s.concat(filtered.map(l=>[l.lat,l.lon]));
+ return s;}
+function coverSetFromLinks(links,T){
+ const dist=ENG.dijkstra(links);const out=[];
+ for(let k=0;k<ENG.DM.length;k++){const m=ENG.DM[k];
+  if(!C().markets.includes(m.c))continue;
+  let t=m.node!=null?dist[m.node]:Infinity;
+  if(t<=T)out.push(k);}
+ return{set:out,dist};}
+function muniW(k){const m=ENG.DM[k];return m.w*(state.weight?m.rw:1);}
+function totalW(){let s=0;for(let k=0;k<ENG.DM.length;k++)if(C().markets.includes(ENG.DM[k].c))s+=muniW(k);return s;}
+function computeCoverage(sites,T){
+ if(!sites.length)return{pct:null,per:{}};
+ let src=[];for(const[la,lo]of sites)src=src.concat(ENG.links(la,lo));
+ const dist=ENG.dijkstra(src);
+ const per={},tot={};
+ for(const m of ENG.DM){
+  if(!C().markets.includes(m.c))continue;
+  let t=m.node!=null?dist[m.node]:Infinity;
+  if(t>T){for(const[la,lo]of sites){const d=ENG.havKm(m.lat,m.lon,la,lo);
+   if(d<40){const td=d*1.35/52*60;if(td<t)t=td;if(t<=T)break;}}}
+  const w=m.w*(state.weight?m.rw:1);
+  tot[m.c]=(tot[m.c]||0)+w;
+  if(t<=T)per[m.c]=(per[m.c]||0)+w;}
+ let cs=0,ts=0;for(const c in tot){cs+=per[c]||0;ts+=tot[c];}
+ const perPct={};for(const c in tot)perPct[c]=100*(per[c]||0)/tot[c];
+ return{pct:100*cs/ts,per:perPct};}
+function syncDrawerBottom(){
+ const a=$('ana');$('drawer').style.bottom=(a.offsetHeight+26)+'px';}
+new ResizeObserver(()=>syncDrawerBottom()).observe(document.getElementById('ana'));
+let kpiTm=null;
+function updateKPI(){clearTimeout(kpiTm);kpiTm=setTimeout(()=>{
+ const T=state.T;
+ const r=computeCoverage(kpiSites(),T);
+ const MEAS={scenario:'planned sites only',existing:'existing dealers (filtered)',both:'planned + existing'};
+ const sc=C().scenarios[C().activeSc];
+ const lensTxt=lens>=0?((state.measure==='existing'||state.measure==='both')?` · ${WS.brands[lens]}: contracted network`:` · lens: ${WS.brands[lens]}`):'';
+ $('kpiCtx').textContent=`${MEAS[state.measure]||state.measure}${lensTxt} · ${state.weight?'weighted':'unweighted'} demand · ${C().name} / ${sc?sc.name:''}`;
+ $('kpiPct').textContent=r.pct==null?'–':r.pct.toFixed(0)+'%';
+ $('kpiSub').textContent=r.pct==null?'':` of demand ≤${T} min${state.weight?' (weighted)':''}`;
+ if(r.pct==null){
+  const guide=state.measure==='existing'
+   ?'<div class="kpiGuide">No dealers match the current filters. Loosen filters in the <b>Filter</b> tab.</div>'
+   :'<div class="kpiGuide"><b>Get your first coverage number:</b><br>1 · Pick markets via <b>Case</b> (top bar)<br>2 · Open <b>Plan</b> and click the map to place a site<br>3 · Coverage appears here — tune the drive-time above</div>';
+  $('kpiTbl').innerHTML='';$('kpiSub').textContent='';
+  $('kpiPct').textContent='–';
+  $('kpiTbl').innerHTML=guide;
+  if(state.white)whiteRedraw();
+  return;}
+ let h='';
+ for(const c of C().markets)if(r.per[c]!=null)h+=`<tr><td>${CFG.labels.market[c]}</td><td>${r.per[c].toFixed(0)}%</td></tr>`;
+ if(state.cmp>=0&&C().scenarios[state.cmp]&&state.cmp!==C().activeSc){
+  const rb=computeCoverage(scenarioSites(C().scenarios[state.cmp]),T);
+  h+=`<tr class="cmp"><td>vs. ${C().scenarios[state.cmp].name}</td><td>${rb.pct==null?'–':rb.pct.toFixed(0)+'%'}</td></tr>`;}
+ $('kpiTbl').innerHTML=h;
+ if(state.white)whiteRedraw();
+},120);}
+function whiteRedraw(){
+ if(!state.white){if(map.hasLayer(whiteBase))map.removeLayer(whiteBase);return;}
+ const T=state.T,sites=kpiSites();
+ if(!sites.length){whiteBase.setBands([{discs:[]}]);}
+ else{let src=[];for(const[la,lo]of sites)src=src.concat(ENG.links(la,lo));
+  const dist=ENG.dijkstra(src);const discs=[];
+  for(let i=0;i<ENG.NN;i++){const t=dist[i];if(t<=T)discs.push([ENG.NLAT[i],ENG.NLON[i],Math.max(3,(T-t)/60*46)]);}
+  for(const[la,lo]of sites)discs.push([la,lo,Math.min(T,22)*0.5]);
+  whiteBase.setBands([{discs}]);}
+ if(!map.hasLayer(whiteBase))whiteBase.addTo(map);}
+function graphIso(lat,lon,label){
+ const T=state.T;
+ const dist=ENG.dijkstra(ENG.links(lat,lon));
+ const bands=[[Math.round(T/3),'#2aa198',.30],[Math.round(T*2/3),'#f5c542',.26],[T,'#f2542d',.20]];
+ const out=[];
+ for(const[bt,color,alpha]of bands){
+  const discs=[];
+  for(let i=0;i<ENG.NN;i++){const t=dist[i];if(t<=bt)discs.push([ENG.NLAT[i],ENG.NLON[i],Math.max(3,(bt-t)/60*46)]);}
+  discs.push([lat,lon,Math.min(bt,20)*0.5]);
+  out.push({discs,color,alpha});}
+ isoLayer.setBands(out.reverse());
+ if(!map.hasLayer(isoLayer))isoLayer.addTo(map);
+ $('driveinfo').innerHTML=`<b>${label}</b> `+bands.map(b=>`<span class="b" style="border-color:${b[1]}"></span>≤${b[0]}'`).join(' ')+` <span style="color:var(--soft)">· estimate</span>`;
+ $('driveinfo').classList.add('on');}
+function hideIso(){isoLayer.setBands([]);if(map.hasLayer(isoLayer))map.removeLayer(isoLayer);$('driveinfo').classList.remove('on');}
+// ================ PLACES ================
+function nearestTown(lat,lon){
+ let best=null,bd=1e9;
+ for(const m of ENG.DM){if(!C().markets.includes(m.c))continue;
+  const d=ENG.havKm(lat,lon,m.lat,m.lon);if(d<bd){bd=d;best=m;}}
+ return best;}
+function potential(p){
+ if(p._pot&&p._pot.T===state.T&&p._pot.w===state.weight)return p._pot.val;
+ const cs=coverSetFromLinks(ENG.links(p.lat,p.lon),state.T);
+ const val=cs.set.reduce((s,k)=>s+muniW(k),0);
+ p._pot={T:state.T,w:state.weight,val};p._cov=cs;return val;}
+function fmtW(w){return w>=1e6?(w/1e6).toFixed(2)+'M':Math.round(w/1000)+'k';}
+function addPlace(lat,lon,opts){
+ const t=nearestTown(lat,lon);
+ const p=Object.assign({id:'p'+(C().seq++),name:(opts&&opts.name)||(t?t.name:'New place'),
+  lat:+lat.toFixed(5),lon:+lon.toFixed(5),state:'open',assigned:null,suggested:null,alternatives:[],greenfield:false},opts||{});
+ activeSc().places.push(p);renderPlaces();return p;}
+window.removePlace=id=>{const sc=activeSc();sc.places=sc.places.filter(p=>p.id!==id);
+ if(state.placeSel===id)state.placeSel=null;renderPlaces();};
+function placeIcon(p,sel,cmp){
+ let cls='open',txt='＋';
+ if(cmp){cls='cmp';txt='○';}
+ else if(p.state==='assigned'){if(p.greenfield){cls='gf';txt='G';}
+  else{cls='assigned';const l=locById[p.assigned];txt=l?l.group.replace(/[^A-ZÀ-Ž]/g,'').slice(0,2)||l.group.slice(0,2).toUpperCase():'✓';}}
+ else if(p.state==='short'){cls='short';txt='?';}
+ return L.divIcon({className:'',iconSize:[26,26],iconAnchor:[13,13],
+  html:`<div class="plc ${cls}${sel?' sel':''}">${txt}</div>`});}
+function renderPlaces(){
+ placesLayer.clearLayers();
+ activeSc().places.forEach(p=>{
+  const m=L.marker([p.lat,p.lon],{draggable:true,zIndexOffset:1000,icon:placeIcon(p,state.placeSel===p.id)});
+  m.bindTooltip(`${p.name} · ${fmtW(potential(p))} potential`,{direction:'top',offset:[0,-12]});
+  m.on('click',()=>selectPlace(p.id));
+  m.on('dragend',e=>{const ll=e.target.getLatLng();placeDragged(p,ll.lat,ll.lng);});
+  m.on('mouseover',()=>{if(state.drive)graphIso(p.lat,p.lon,p.name+' (place)');});
+  m.on('mouseout',()=>{if(state.drive)hideIso();});
+  placesLayer.addLayer(m);});
+ if(state.cmp>=0&&C().scenarios[state.cmp]&&state.cmp!==C().activeSc)
+  C().scenarios[state.cmp].places.forEach(p=>{
+   placesLayer.addLayer(L.marker([p.lat,p.lon],{interactive:false,zIndexOffset:900,icon:placeIcon(p,false,true)}));});
+ renderArea();syncSc();syncCmp();renderDrawer();updateKPI();save();}
+function renderArea(){
+ const p=activeSc().places.find(x=>x.id===state.placeSel);
+ if(!p){areaLayer.setBands([]);if(map.hasLayer(areaLayer))map.removeLayer(areaLayer);return;}
+ potential(p);
+ const T=state.T,dist=p._cov.dist,discs=[];
+ for(let i=0;i<ENG.NN;i++){const t=dist[i];if(t<=T)discs.push([ENG.NLAT[i],ENG.NLON[i],Math.max(3,(T-t)/60*46)]);}
+ discs.push([p.lat,p.lon,Math.min(T,20)*0.5]);
+ areaLayer.setBands([{discs,color:'#008CC8',alpha:.22}]);
+ if(!map.hasLayer(areaLayer))areaLayer.addTo(map);}
+window.placeDragged=(p,lat,lon)=>{
+ p.lat=+lat.toFixed(5);p.lon=+lon.toFixed(5);p._pot=null;
+ const t=nearestTown(p.lat,p.lon);if(t)p.name=t.name;
+ renderPlaces();};
+function selectPlace(id){state.placeSel=state.placeSel===id?null:id;renderPlaces();}
+let pickCb=null;
+window.startPick=cb=>{pickCb=cb;$('planbar').textContent='Click the map to set the position.';
+ $('planbar').classList.add('on');map.getContainer().style.cursor='crosshair';};
+map.on('click',e=>{
+ if(pickCb){const cb=pickCb;pickCb=null;
+  $('planbar').classList.remove('on');$('planbar').innerHTML='<b>Placing mode.</b> Click the map to add a place.';
+  map.getContainer().style.cursor=state.plan?'crosshair':'';
+  cb(e.latlng.lat,e.latlng.lng);return;}
+ if(!state.plan)return;
+ const p=addPlace(e.latlng.lat,e.latlng.lng);selectPlace(p.id);});
+// ---- assignment ----
+function assignConstraints(){return{cn:$('aCn').value,prio:$('aPrio').value,
+ must:$('aMust').value,mustNot:$('aMustNot').value,maxG:+$('aMaxG').value};}
+function candOK(l,cst){
+ if(WS.exclLocs.includes(l.id))return false;
+ if(cst.cn==='require'&&!l.cn)return false;
+ if(cst.cn==='exclude'&&l.cn)return false;
+ const pr=prio(l.group);
+ if(cst.prio==='A'&&pr!=='A')return false;
+ if(cst.prio==='AB'&&pr!=='A'&&pr!=='B')return false;
+ if(cst.must&&!l.brands.includes(cst.must))return false;
+ if(cst.mustNot&&l.brands.includes(cst.mustNot))return false;
+ return true;}
+function accessScore(t){t=(t||'').toLowerCase().trim();
+ if(/nicht sinnvoll|nein|no\b|wettbewerber/.test(t))return .05;
+ if(/^ja|yes|existing|partner|m\.d\./.test(t))return 1;
+ if(/machbar|möglich|possible|feasible|offen/.test(t))return .65;
+ if(!t)return .45;return .55;}
+function candidatesFor(p,cst,usedIds,groupCount){
+ potential(p);const dist=p._cov.dist,T=state.T,out=[];
+ for(const l of filtered){
+  if(usedIds&&usedIds.has(l.id))continue;
+  if(!candOK(l,cst))continue;
+  if(cst.maxG&&groupCount&&(groupCount[l.group]||0)>=cst.maxG)continue;
+  let t=Infinity;for(const[n,acc]of LOCLINKS[l.id])t=Math.min(t,dist[n]+acc);
+  const d=ENG.havKm(p.lat,p.lon,l.lat,l.lon);if(d<40)t=Math.min(t,d*1.35/52*60);
+  if(t>T)continue;
+  const pr=prio(l.group);
+  const score=.5*(1-t/T)+.2*({'A':1,'B':.65,'C':.35,'–':.5}[pr])+.3*accessScore(eAccess(l));
+  out.push({l,t,score});}
+ return out.sort((a,b)=>b.score-a.score);}
+$('aSuggest').onclick=()=>{
+ const cst=assignConstraints();
+ const used=new Set();const gc={};
+ activeSc().places.forEach(p=>{if(p.assigned&&p.assigned!=='GF'){used.add(p.assigned);
+  const l=locById[p.assigned];if(l)gc[l.group]=(gc[l.group]||0)+1;}});
+ const order=[...activeSc().places].sort((a,b)=>potential(b)-potential(a));
+ for(const p of order){
+  if(p.state==='assigned')continue;
+  const cands=candidatesFor(p,cst,used,gc);
+  if(cands.length){p.suggested=cands[0].l.id;p.alternatives=cands.slice(1,4).map(c=>c.l.id);
+   p.state='short';used.add(cands[0].l.id);gc[cands[0].l.group]=(gc[cands[0].l.group]||0)+1;}
+  else{p.suggested=null;p.alternatives=[];}}
+ renderPlaces();};
+$('aAccept').onclick=()=>{
+ activeSc().places.forEach(p=>{if(p.state==='short'&&p.suggested){p.assigned=p.suggested;p.state='assigned';p.greenfield=false;}});
+ renderPlaces();};
+window.assignDealer=(pid,lid)=>{const p=activeSc().places.find(x=>x.id===pid);if(!p)return;
+ p.assigned=lid;p.state='assigned';p.greenfield=false;
+ if(p.suggested===lid)p.suggested=null;
+ p.alternatives=p.alternatives.filter(a=>a!==lid);renderPlaces();};
+window.altDealer=(pid,lid)=>{const p=activeSc().places.find(x=>x.id===pid);if(!p)return;
+ const i=p.alternatives.indexOf(lid);
+ if(i>=0)p.alternatives.splice(i,1);else p.alternatives.push(lid);renderPlaces();};
+window.markGreenfield=pid=>{const p=activeSc().places.find(x=>x.id===pid);if(!p)return;
+ p.assigned='GF';p.greenfield=true;p.state='assigned';renderPlaces();};
+window.unassign=pid=>{const p=activeSc().places.find(x=>x.id===pid);if(!p)return;
+ p.assigned=null;p.greenfield=false;p.state=p.suggested?'short':'open';renderPlaces();};
+// ---- place proposal (optimizer step 1) ----
+function runPropose(){
+ const T=state.T;
+ const obj=$('oObj').value,N=+$('oN').value,pct=+$('oPct').value,
+  space=+$('oSpace').value,minD=+$('oMinD').value*1000,src=$('oSrc').value;
+ // locked partners become assigned places if not present
+ lockedIds().forEach(id=>{const l=locById[id];if(!l||!inCase(l))return;
+  if(!activeSc().places.some(p=>p.assigned===id))
+   activeSc().places.push({id:'p'+(C().seq++),name:l.city,lat:l.lat,lon:l.lon,state:'assigned',
+    assigned:id,suggested:null,alternatives:[],greenfield:false});});
+ const covered=new Uint8Array(ENG.DM.length);const TOT=totalW();let covW=0;
+ function apply(set){for(const k of set){if(!covered[k]){covered[k]=1;covW+=muniW(k);}}}
+ const existing=activeSc().places.map(p=>{potential(p);apply(p._cov.set);return p;});
+ // candidate positions
+ let cands;
+ if(src==='dealers')cands=filtered.filter(l=>!WS.exclLocs.includes(l.id))
+   .map(l=>({name:l.city,lat:l.lat,lon:l.lon,links:LOCLINKS[l.id]}));
+ else cands=ENG.DM.filter(m=>C().markets.includes(m.c))
+   .map(m=>({name:m.name,lat:m.lat,lon:m.lon,links:[[m.node,0]]}));
+ const CI=cands.map(c=>{const cs=coverSetFromLinks(c.links,T);
+  return{...c,set:cs.set,dist:cs.dist,demand:cs.set.reduce((s,k)=>s+muniW(k),0)};})
+  .filter(ci=>ci.demand>=minD);
+ const accepted=[];
+ function spacingOK(ci){
+  if(!space)return true;
+  for(const a of accepted.concat(existing)){
+   const nl=ENG.links(a.lat,a.lon)[0];
+   if(ci.dist[nl[0]]+nl[1]<space)return false;}
+  return true;}
+ const done=()=>obj==='maxcov'?accepted.length>=N:(covW/TOT*100>=pct||accepted.length>=40);
+ while(!done()){
+  let best=null,bg=-1;
+  for(const ci of CI){if(ci._in)continue;if(!spacingOK(ci))continue;
+   let g=0;for(const k of ci.set)if(!covered[k])g+=muniW(k);
+   if(g>bg){bg=g;best=ci;}}
+  if(!best||bg<=0)break;
+  best._in=true;apply(best.set);
+  accepted.push(best);
+  activeSc().places.push({id:'p'+(C().seq++),name:best.name,lat:best.lat,lon:best.lon,
+   state:'open',assigned:null,suggested:null,alternatives:[],greenfield:false,_gain:bg,_prop:true});}
+ renderPlaces();}
+$('oRun').onclick=runPropose;
+let liveTm=null,APPLYING=false;
+function liveMaybe(){
+ if(APPLYING||!$('oLive').checked)return;
+ clearTimeout(liveTm);
+ const cse=C(),sc=activeSc(); // pin the target at schedule time
+ liveTm=setTimeout(()=>{
+  if(C()!==cse||activeSc()!==sc)return; // user switched — never touch another scenario
+  // live mode replaces only the optimizer's own open proposals; manual places survive
+  sc.places=sc.places.filter(p=>!(p._prop&&p.state==='open'));
+  runPropose();},380);}
+[['oN','oNVal',v=>v],['oPct','oPctVal',v=>v+'%'],['oSpace','oSpaceVal',v=>v==0?'off':v+' min'],
+ ['oMinD','oMinDVal',v=>v==0?'off':v+'k'],['aMaxG','aMaxGVal',v=>v==0?'off':v]].forEach(([id,vid,f])=>{
+ $(id).oninput=e=>{$(vid).textContent=f(e.target.value);if(id[0]==='o'&&id!=='oPct'||id==='oPct')liveMaybe();};});
+$('oObj').onchange=e=>{const m=e.target.value==='maxcov';
+ $('oNRow').style.display=m?'':'none';$('oPctRow').style.display=m?'none':'';};
+// ---- drawer ----
+function stateChip(p){return p.state==='assigned'?`<span class="st assigned">${p.greenfield?'greenfield':'assigned'}</span>`:
+ p.state==='short'?'<span class="st short">suggested</span>':'<span class="st open">open</span>';}
+function renderDrawer(){
+ const dr=$('drawer');
+ if(state.mode!==2){dr.classList.remove('on');return;}
+ dr.classList.add('on');
+ const sc=activeSc();
+ const sel=sc.places.find(p=>p.id===state.placeSel);
+ if(sel){dr.innerHTML=placeDetail(sel);wireDetail(sel);return;}
+ let h=`<h2>Places — ${sc.name}</h2>`;
+ if(!sc.places.length){
+  h+=`<div class="hint" style="font-size:12px;line-height:1.7"><b>How planning works:</b><br>
+  1 · Define places — click the map or let the optimizer propose them.<br>
+  2 · Assign dealers — pick from ranked candidates per place.<br>
+  3 · Read coverage in the Analysis card (bottom right).</div>`;}
+ else{
+  sc.places.forEach(p=>{
+   const a=p.assigned&&p.assigned!=='GF'?locById[p.assigned]:null;
+   const sug=!a&&p.suggested?locById[p.suggested]:null;
+   h+=`<div class="pRow${state.placeSel===p.id?' sel':''}" onclick="selectPlace('${p.id}')">
+    ${stateChip(p)}<span class="nm"><b>${p.name}</b>${a?` · ${a.city}`:sug?` · → ${sug.city}?`:p.greenfield?' · greenfield':''}</span>
+    <span class="pot">${fmtW(potential(p))}</span></div>`;});
+  const n=sc.places.length,as=sc.places.filter(p=>p.state==='assigned').length,
+   sh=sc.places.filter(p=>p.state==='short').length;
+  h+=`<div class="stats"><span><b>${n}</b> places</span><span><b>${as}</b> assigned</span><span><b>${sh}</b> suggested</span><span><b>${n-as-sh}</b> open</span></div>`;}
+ const lk=lockedIds();
+ h+=`<h2 style="margin-top:14px">📌 Locked partners</h2>`+(lk.length?lk.map(id=>{const l=locById[id];
+  return l?`<div class="pRow" style="cursor:default">📌 <span class="nm">${l.group} — ${l.city}</span><span class="pot" style="cursor:pointer" onclick="toggleLock(${id})">✕</span></div>`:'';}).join(''):
+  '<div class="hint">None. Lock a dealer via its map popup.</div>');
+ dr.innerHTML=h;}
+window.selectPlace=selectPlace;
+function placeDetail(p){
+ const a=p.assigned&&p.assigned!=='GF'?locById[p.assigned]:null;
+ let h=`<span class="bk" id="bkBtn">‹ All places</span>
+ <h2><input type="text" id="plName" value="${p.name.replace(/"/g,'&quot;')}" style="font-size:13px;font-weight:600"> </h2>
+ <div class="hint" style="margin-top:-2px">${stateChip(p)} · potential <b>${fmtW(potential(p))}</b> within ${state.T} min</div>
+ <div class="btnrow"><button class="btn" id="plGf">${p.greenfield?'✓ Greenfield':'Mark greenfield'}</button>
+ ${p.assigned?'<button class="btn" id="plUn">Unassign</button>':''}
+ <button class="btn" id="plDel" style="color:var(--danger)">Remove place</button></div>`;
+ if(a)h+=`<div class="cRow primary"><div class="top"><b>${a.group}</b><span class="score">assigned</span></div>
+  <div class="meta">${a.city} · ${a.own} · Prio ${prio(a.group)}${a.cn?' · CN':''}</div></div>`;
+ h+=`<h2 style="margin-top:12px">Candidates <span class="qi" data-tip="Filtered dealers reachable within the ⏱ threshold from this place, ranked by drive time, your priority, expansion readiness and access.">?</span></h2><div id="candList"></div>`;
+ return h;}
+function wireDetail(p){
+ $('bkBtn').onclick=()=>{state.placeSel=null;renderPlaces();};
+ $('plName').onchange=e=>{p.name=e.target.value.trim()||p.name;renderPlaces();};
+ $('plGf').onclick=()=>markGreenfield(p.id);
+ if($('plUn'))$('plUn').onclick=()=>unassign(p.id);
+ $('plDel').onclick=async()=>{if(await ui.confirm(`Remove place "${p.name}"?`,{danger:true,ok:'Remove'}))removePlace(p.id);};
+ const cst=assignConstraints();
+ const cands=candidatesFor(p,cst,null,null).slice(0,8);
+ $('candList').innerHTML=cands.length?cands.map(c=>{
+  const isA=p.assigned===c.l.id,isAlt=p.alternatives.includes(c.l.id),isSug=p.suggested===c.l.id;
+  return `<div class="cRow${isA?' primary':''}">
+   <div class="top"><b>${c.l.group}</b><span class="score">${Math.round(c.score*100)}%</span></div>
+   <div class="meta">${c.l.city} · ~${Math.round(c.t)} min · Prio ${prio(c.l.group)}${c.l.dtype==='independent'?' · indep.':''}${c.l.cn?' · CN':''}${isSug?' · <b>suggested</b>':''}${eAccess(c.l)?' · '+eAccess(c.l).slice(0,30):''}${eComment(c.l)?'<br>💬 '+eComment(c.l).slice(0,80):''}</div>
+   <div class="acts">${isA?'<button class="btn" onclick="unassign(\''+p.id+'\')">Unassign</button>':
+    '<button class="btn primary" onclick="assignDealer(\''+p.id+'\','+c.l.id+')">Assign</button>'}
+   <button class="btn" onclick="altDealer('${p.id}',${c.l.id})">${isAlt?'★ Alternative':'☆ Alternative'}</button>
+   <button class="btn" onclick="editComment('${c.l.group.replace(/'/g,"\\'")}')" title="Edit comment">💬</button></div></div>`;
+ }).join(''):'<div class="hint">No candidates within the threshold — widen filters, relax constraints, raise ⏱, or mark greenfield.</div>';}
+// ================ scenarios ================
+function syncSc(){const s=$('scSelect');s.innerHTML='';
+ C().scenarios.forEach((sc,i)=>{const o=document.createElement('option');o.value=i;
+  o.textContent=`${sc.name} (${sc.places.length})`;s.appendChild(o);});
+ s.value=C().activeSc;}
+$('scSelect').onchange=e=>{clearTimeout(liveTm);C().activeSc=+e.target.value;state.placeSel=null;renderPlaces();};
+$('scMenu').onclick=()=>{buildScDlg();$('scDlg').showModal();};
+function buildScDlg(){
+ const el=$('scList');el.innerHTML='';
+ C().scenarios.forEach((sc,i)=>{const d=document.createElement('div');
+  d.style.cssText='display:flex;align-items:center;gap:8px;padding:6px;border-bottom:1px solid var(--line)';
+  d.innerHTML=`<b style="cursor:pointer;flex:1">${sc.name}</b><span class="hint" style="margin:0">${sc.places.length} places</span>
+   <a style="cursor:pointer" title="Rename" data-a="r">✎</a><a style="cursor:pointer" title="Duplicate" data-a="d">⧉</a>
+   ${C().scenarios.length>1?'<a style="cursor:pointer;color:var(--danger)" title="Delete" data-a="x">✕</a>':''}`;
+  d.querySelector('b').onclick=()=>{C().activeSc=i;state.placeSel=null;$('scDlg').close();renderPlaces();};
+  d.querySelectorAll('a').forEach(a=>a.onclick=async()=>{
+   if(a.dataset.a==='r'){const n=await ui.prompt('New scenario name:',sc.name,{title:'Rename scenario'});
+    if(n){sc.name=n.trim()||sc.name;buildScDlg();renderPlaces();}}
+   if(a.dataset.a==='d'){C().scenarios.push(JSON.parse(JSON.stringify({...sc,name:sc.name+' copy'})));buildScDlg();renderPlaces();}
+   if(a.dataset.a==='x'&&await ui.confirm(`Delete scenario "${sc.name}" with ${sc.places.length} places? A backup is kept (Settings → Restore backup).`,{danger:true,ok:'Delete'})){
+    backup();C().scenarios.splice(i,1);C().activeSc=0;buildScDlg();renderPlaces();}});
+  el.appendChild(d);});}
+$('scNew').onclick=async()=>{const n=await ui.prompt('Scenario name:','Scenario '+(C().scenarios.length+1),{title:'New scenario',ok:'Create'});
+ if(!n)return;
+ C().scenarios.push(newScenario(n.trim()));C().activeSc=C().scenarios.length-1;$('scDlg').close();renderPlaces();};
+function syncCmp(){const sel=$('cmpSelect');const cur=state.cmp;
+ sel.innerHTML='<option value="-1">Compare: none</option>';
+ C().scenarios.forEach((sc,i)=>{if(i===C().activeSc)return;
+  const o=document.createElement('option');o.value=i;o.textContent='Compare: '+sc.name;sel.appendChild(o);});
+ sel.value=[...sel.options].some(o=>+o.value===cur)?cur:-1;state.cmp=+sel.value;}
+$('cmpSelect').onchange=e=>{state.cmp=+e.target.value;renderPlaces();};
+// ================ cases ================
+function syncCase(){
+ $('caseName').textContent=C().name;
+ $('fMarket').innerHTML='';state.market=new Set();state.placeSel=null;
+ C().markets.forEach(mk=>{const c=document.createElement('span');c.className='chip on';c.textContent=mk;
+  c.onclick=()=>{if(state.market.size===0)state.market=new Set(C().markets);
+   state.market.has(mk)?state.market.delete(mk):state.market.add(mk);
+   c.classList.toggle('on');render();};$('fMarket').appendChild(c);});
+ map.setView(CFG.view.center,CFG.view.zoom);
+ renderCities();renderPop();renderPlaces();render();save();
+ if(typeof applyPlanCtls==='function')applyPlanCtls();}
+$('caseBtn').onclick=()=>{buildCaseDlg();$('caseDlg').showModal();};
+function buildCaseDlg(){
+ const el=$('caseList');el.innerHTML='';
+ WS.cases.forEach((c,i)=>{const d=document.createElement('div');
+  d.style.cssText='display:flex;align-items:center;gap:8px;padding:5px;border-bottom:1px solid var(--line)';
+  d.innerHTML=`<b style="cursor:pointer;flex:1">${c.name}</b><span class="hint" style="margin:0">${c.markets.join('+')}${c.brands.length?' · '+c.brands.join(', '):''}</span>`+
+   (WS.cases.length>1?`<a style="color:var(--danger);cursor:pointer" data-del="${i}">✕</a>`:'');
+  d.querySelector('b').onclick=()=>{WS.active=i;$('caseDlg').close();syncCase();};
+  const del=d.querySelector('[data-del]');
+  if(del)del.onclick=async()=>{if(await ui.confirm(`Delete case "${c.name}" including all its scenarios? A backup is kept.`,{danger:true,ok:'Delete'})){backup();WS.cases.splice(i,1);WS.active=0;buildCaseDlg();syncCase();}};
+  el.appendChild(d);});
+ $('ncMk').innerHTML='';['CZ','SK','CH','AT'].forEach(mk=>{const c=document.createElement('span');
+  c.className='chip on';c.textContent=mk;c.onclick=()=>c.classList.toggle('on');$('ncMk').appendChild(c);});}
+$('caseCreate').onclick=()=>{
+ const name=$('ncName').value.trim()||'New case';
+ const mks=[...$('ncMk').children].filter(c=>c.classList.contains('on')).map(c=>c.textContent);
+ if(!mks.length){ui.alert('Select at least one market.');return;}
+ const brands=$('ncBrands').value.split(',').map(s=>s.trim()).filter(Boolean);
+ WS.cases.push(newCase(name,mks,brands));WS.active=WS.cases.length-1;
+ $('ncName').value='';$('ncBrands').value='';$('caseDlg').close();syncCase();};
+$('caseClose').onclick=()=>$('caseDlg').close();
+// ================ DIRECTORY ================
+let dirTab='groups',dirMk=new Set(['CZ','SK','CH','AT']),dirSortK=null,dirSortAsc=true,dirRows=[];
+$('dirBtn').onclick=()=>{buildDir();$('dirSheet').classList.add('on');};
+document.querySelectorAll('#dirTabs .chip').forEach(c=>c.onclick=()=>{
+ document.querySelectorAll('#dirTabs .chip').forEach(x=>x.classList.remove('on'));
+ c.classList.add('on');dirTab=c.dataset.t;dirSortK=null;buildDir();});
+['CZ','SK','CH','AT'].forEach(mk=>{const c=document.createElement('span');c.className='chip on';c.textContent=mk;
+ c.onclick=()=>{dirMk.has(mk)?dirMk.delete(mk):dirMk.add(mk);c.classList.toggle('on');buildDir();};
+ $('dirMk').appendChild(c);});
+$('dirQ').oninput=()=>buildDir();
+function mkBadge(m){return `<span class="mkb" style="background:${CFG.colors.market[m]}">${m}</span>`;}
+function assignedPlaceOf(lid){
+ for(const c of WS.cases)for(const sc of c.scenarios)for(const p of sc.places)
+  if(p.assigned===lid)return{c,p};
+ return null;}
+function buildDir(){
+ const q=$('dirQ').value.toLowerCase();
+ if(dirTab==='groups'){
+  let rows=GROUPS.filter(g=>dirMk.has(g.market)&&(!q||g.name.toLowerCase().includes(q)||(g.brands||'').toLowerCase().includes(q)));
+  if(dirSortK)rows.sort((a,b)=>String(a[dirSortK]||'').localeCompare(String(b[dirSortK]||''),undefined,{numeric:true})*(dirSortAsc?1:-1));
+  dirRows=rows;
+  const cnt={};LOCATIONS.forEach(l=>cnt[l.group]=(cnt[l.group]||0)+1);
+  let h=`<table class="db"><tr>${[['name','Group'],['market','Mkt'],['own','Ownership'],['cnDetail','Chinese'],['sales','Sales (est)'],['brands','Brand portfolio']].map(c=>`<th data-k="${c[0]}">${c[1]}</th>`).join('')}<th>Locations</th><th>Access ✎ <span class="qi" data-tip="From the source file; edits are stored as workspace overrides and never change the Excel.">?</span></th><th>Comment ✎</th><th>Priority ✎</th><th>Notes ✎</th><th></th></tr>`;
+  rows.forEach(g=>{const e=WS.dbEdits[g.name]||{};
+   const acc=ovr(g.name,'access',g.access),com=ovr(g.name,'comment',g.comment);
+   h+=`<tr><td><b>${g.name}</b></td><td>${mkBadge(g.market)}</td><td>${g.own}</td><td>${(g.cnDetail||'').slice(0,44)}</td><td>${(g.sales||'').slice(0,20)}</td><td>${(g.brands||'').slice(0,60)}</td>
+   <td>${cnt[g.name]||0}</td>
+   <td><input class="dbAcc" data-g="${g.name.replace(/"/g,'&quot;')}" value="${acc.replace(/"/g,'&quot;')}" style="width:105px"${e.access!=null&&e.access!==''?' title="workspace override"':''}></td>
+   <td><input class="dbCom" data-g="${g.name.replace(/"/g,'&quot;')}" value="${com.replace(/"/g,'&quot;')}" style="width:190px"${e.comment!=null&&e.comment!==''?' title="workspace override"':''}></td>
+   <td><select class="dbPrio" data-g="${g.name.replace(/"/g,'&quot;')}">${['–','A','B','C'].map(p=>`<option${(e.priority||'–')===p?' selected':''}>${p}</option>`).join('')}</select></td>
+   <td><input class="dbNote" data-g="${g.name.replace(/"/g,'&quot;')}" value="${(e.note||'').replace(/"/g,'&quot;')}" style="width:90px"></td>
+   <td><span class="act" title="Show only this group on the map" onclick="dirFilterGroup('${g.name.replace(/'/g,"\\'")}')">🎯</span>${g.custom?`<span class="act" title="Delete custom group" onclick="removeCustomGroup('${g.name.replace(/'/g,"\\'")}')">🗑</span>`:''}</td></tr>`;});
+  $('dirWrap').innerHTML=h+'</table>';
+  $('dirTotals').textContent=`${rows.length} groups · ${rows.reduce((s,g)=>s+(cnt[g.name]||0),0)} locations in view`;
+  document.querySelectorAll('.dbPrio').forEach(s=>s.onchange=e=>{
+   const g=e.target.dataset.g;WS.dbEdits[g]=WS.dbEdits[g]||{};WS.dbEdits[g].priority=e.target.value;save();render();});
+  document.querySelectorAll('.dbNote').forEach(s=>s.onchange=e=>{
+   const g=e.target.dataset.g;WS.dbEdits[g]=WS.dbEdits[g]||{};WS.dbEdits[g].note=e.target.value;save();});
+  document.querySelectorAll('.dbAcc').forEach(s=>s.onchange=e=>setEdit(e.target.dataset.g,'access',e.target.value));
+  document.querySelectorAll('.dbCom').forEach(s=>s.onchange=e=>setEdit(e.target.dataset.g,'comment',e.target.value));
+ }else{
+  let rows=LOCATIONS.filter(l=>dirMk.has(l.market)&&(!q||l.group.toLowerCase().includes(q)||l.city.toLowerCase().includes(q)||l.brands.join(' ').toLowerCase().includes(q)||l.address.toLowerCase().includes(q)));
+  if(dirSortK)rows.sort((a,b)=>String(a[dirSortK]||'').localeCompare(String(b[dirSortK]||''),undefined,{numeric:true})*(dirSortAsc?1:-1));
+  dirRows=rows;
+  let h=`<table class="db"><tr>${[['city','Location'],['market','Mkt'],['dtype','Type'],['group','Group'],['address','Address'],['brands','Brands'],['precision','Precision']].map(c=>`<th data-k="${c[0]}">${c[1]}</th>`).join('')}<th>Comment</th><th>Status</th><th style="width:104px">Actions</th></tr>`;
+  rows.forEach(l=>{
+   const ap=assignedPlaceOf(l.id);const lk=lockedIds().includes(l.id);const ex=WS.exclLocs.includes(l.id);
+   const com=eComment(l);
+   h+=`<tr${ex?' class="excl"':''}><td><b>${l.city}</b></td><td>${mkBadge(l.market)}</td><td>${l.dtype==='independent'?'Indep.':'Group'}</td><td>${l.group.slice(0,36)}</td><td>${l.address.slice(0,44)}</td><td>${l.brands.join(', ').slice(0,44)}</td><td>${l.precision}</td>
+   <td>${com?com.slice(0,60):''}</td>
+   <td>${l.custom?'<span class="st short">custom</span> ':''}${ap?`<span class="st assigned">place: ${ap.p.name}</span>`:''}${lk?' 📌':''}${ex?' <span class="st open">excluded</span>':''}</td>
+   <td><span class="act" title="Show on map" onclick="dirFly(${l.id})">📍</span>
+   <span class="act" title="${lk?'Unlock':'Lock as partner'}" onclick="toggleLock(${l.id});buildDir()">📌</span>
+   <span class="act" title="${ex?'Include as candidate again':'Exclude from candidates'}" onclick="dirExcl(${l.id})">🚫</span>
+   <span class="act" title="Add / edit comment" onclick="editComment('${l.group.replace(/'/g,"\\'")}');buildDir()">💬</span>${l.custom?`<span class="act" title="Delete custom location" onclick="delCustomLoc(${l.id})">🗑</span>`:''}</td></tr>`;});
+  $('dirWrap').innerHTML=h+'</table>';
+  $('dirTotals').textContent=`${rows.length} locations in view · ${WS.exclLocs.length} excluded from candidates workspace-wide`;}
+ document.querySelectorAll('#dirWrap th[data-k]').forEach(th=>th.onclick=()=>{
+  const k=th.dataset.k;dirSortAsc=(dirSortK===k)?!dirSortAsc:true;dirSortK=k;buildDir();});}
+window.dirFilterGroup=g=>{state.groups=new Set([g]);syncGroups();$('dirSheet').classList.remove('on');render();};
+window.dirFly=id=>{const l=locById[id];if(!l)return;$('dirSheet').classList.remove('on');
+ map.setView([l.lat,l.lon],12);
+ const ring=L.circle([l.lat,l.lon],{radius:900,color:'#008CC8',weight:3,fillOpacity:0}).addTo(map);
+ setTimeout(()=>map.removeLayer(ring),2600);};
+window.delCustomLoc=async id=>{const l=locById[id];
+ if(await ui.confirm(`Delete custom location "${l?l.city:id}"? References (locks, assignments) are cleaned up.`,{danger:true,ok:'Delete'})){
+  removeCustomLocation(id);buildDir();}};
+window.dirExcl=id=>{const i=WS.exclLocs.indexOf(id);
+ if(i>=0)WS.exclLocs.splice(i,1);else WS.exclLocs.push(id);save();buildDir();};
+$('dirAdd').onclick=()=>{openAddDlg(dirTab==='groups'?'group':'location');};
+function openAddDlg(kind,keep){
+ $('adTitle').textContent=kind==='group'?'Add group':'Add location';
+ $('adLocFields').style.display=kind==='location'?'':'none';
+ $('adGrpFields').style.display=kind==='group'?'':'none';
+ $('addDlg').dataset.kind=kind;
+ if(!keep){['adName','adGroup','adAddress','adBrands','adLat','adLon','agName','agBrands','agAccess','agComment'].forEach(id=>$(id).value='');}
+ $('adGroupList').innerHTML='';GROUPS.forEach(g=>{const o=document.createElement('option');o.value=g.name;$('adGroupList').appendChild(o);});
+ $('addDlg').showModal();}
+$('adPick').onclick=()=>{
+ $('addDlg').close();$('dirSheet').classList.remove('on');
+ startPick((la,lo)=>{
+  $('adLat').value=la.toFixed(5);$('adLon').value=lo.toFixed(5);
+  if(!$('adName').value){const t=nearestTown(la,lo);if(t)$('adName').value=t.name;}
+  $('dirSheet').classList.add('on');openAddDlg('location',true);});};
+$('adCancel').onclick=()=>$('addDlg').close();
+$('adOk').onclick=async()=>{
+ const kind=$('addDlg').dataset.kind;
+ if(kind==='group'){
+  const name=$('agName').value.trim();
+  if(!name){ui.alert('Group name is required.');return;}
+  if(GROUPS.some(g=>g.name===name)){ui.alert('A group with this name already exists.');return;}
+  addCustomGroup({name,market:$('agMarket').value,own:$('agOwn').value,ownRaw:$('agOwn').value,
+   hq:'',outlets:'',rev:'',sales:'',brands:$('agBrands').value.trim(),
+   cn:$('agCn').checked,cnDetail:$('agCn').checked?'Yes':'No',
+   access:$('agAccess').value.trim(),comment:$('agComment').value.trim()});
+  $('addDlg').close();buildDir();return;}
+ const city=$('adName').value.trim(),group=$('adGroup').value.trim()||city;
+ const la=parseFloat($('adLat').value),lo=parseFloat($('adLon').value);
+ if(!city){ui.alert('Location name is required.');return;}
+ if(!isFinite(la)||!isFinite(lo)){ui.alert('Set a position — use "Pick on map" or enter Lat/Lon.');return;}
+ addCustomLocation({city,group,market:$('adMarket').value,address:$('adAddress').value.trim(),
+  brands:$('adBrands').value.split(',').map(b=>b.trim()).filter(Boolean),
+  lat:la,lon:lo,dtype:$('adType').value});
+ $('addDlg').close();buildDir();};
+$('dirApply').onclick=()=>{
+ const gs=dirTab==='groups'?dirRows.map(g=>g.name):[...new Set(dirRows.map(l=>l.group))];
+ state.groups=new Set(gs);syncGroups();$('dirSheet').classList.remove('on');render();};
+$('dirCsv').onclick=()=>{
+ if(dirTab==='groups'){
+  const head=['Group','Market','Ownership','Access','Comment','Chinese','Sales (est)','Brands','Priority','Notes'];
+  const rows=dirRows.map(g=>{const e=WS.dbEdits[g.name]||{};
+   return[g.name,g.market,g.own,ovr(g.name,'access',g.access),ovr(g.name,'comment',g.comment),g.cnDetail,g.sales,g.brands,e.priority||'–',e.note||''];});
+  download('directory_groups.csv',csv([head,...rows]),'text/csv');}
+ else{const head=['Location','Market','Group','Address','Brands','Precision','Locked','Excluded'];
+  const rows=dirRows.map(l=>[l.city,l.market,l.group,l.address,l.brands.join('; '),l.precision,
+   lockedIds().includes(l.id)?'Yes':'',WS.exclLocs.includes(l.id)?'Yes':'']);
+  download('directory_locations.csv',csv([head,...rows]),'text/csv');}};
+// ================ workspace menu / io ================
+$('wsBtn').onclick=e=>{const m=$('wsMenu');const r=e.currentTarget.getBoundingClientRect();
+ m.style.top=(r.bottom+6)+'px';m.style.right=(window.innerWidth-r.right)+'px';m.style.left='auto';
+ m.style.display=m.style.display==='flex'?'none':'flex';};
+document.addEventListener('click',e=>{if(!e.target.closest('#wsBtn')&&!e.target.closest('#wsMenu'))$('wsMenu').style.display='none';});
+function esc(v){v=String(v??'');return /[",\n;]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}
+function csv(rows){return '\ufeff'+rows.map(r=>r.map(esc).join(',')).join('\n');}
+function download(n,c,t){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:t}));a.download=n;a.click();URL.revokeObjectURL(a.href);}
+$('wsExport').onclick=()=>{download('dealer_network_workspace.json',JSON.stringify({...WS,exported:new Date().toISOString(),buildInfo:BUILD},null,1),'application/json');$('wsMenu').style.display='none';};
+$('wsImport').onclick=()=>$('wsFile').click();
+$('wsFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
+ r.onload=()=>{try{const d=migrate(JSON.parse(r.result));
+  if(!d||!Array.isArray(d.cases))throw 0;backup();
+  WS=d;WS.active=Math.min(WS.active||0,WS.cases.length-1);
+  localStorage.setItem(WS_KEY,JSON.stringify(WS));location.reload();}catch{ui.alert('Not a valid workspace file.');}};
+ r.readAsText(f);e.target.value='';};
+$('wsReset').onclick=async()=>{if(await ui.confirm('Reset the entire workspace? A backup is kept (Settings → Restore backup).',{danger:true,ok:'Reset'})){backup();localStorage.removeItem(WS_KEY);location.reload();}};
+$('wsRestore').onclick=async()=>{const b=localStorage.getItem(BK_KEY);
+ if(!b){ui.alert('No backup available yet.');return;}
+ if(await ui.confirm('Restore the last backup? Current state will be replaced.',{ok:'Restore'})){localStorage.setItem(WS_KEY,b);location.reload();}};
+// CSV exports
+$('csvLoc').onclick=()=>{
+ const head=['Group','Type','Market','City','Address','Brands','Ownership','Priority','Chinese','Access','Comment','Lat','Lon','Precision'];
+ const rows=filtered.map(l=>[l.group,l.dtype,l.market,l.city,l.address,l.brands.join('; '),l.own,prio(l.group),l.cn?'Yes':'No',eAccess(l),eComment(l),l.lat,l.lon,l.precision]);
+ download('locations_filtered.csv',csv([head,...rows]),'text/csv');};
+$('csvPlan').onclick=()=>{
+ const rows=[];WS.cases.forEach(c=>c.scenarios.forEach(sc=>sc.places.forEach(p=>{
+  const a=p.assigned&&p.assigned!=='GF'?locById[p.assigned]:null;
+  rows.push([c.name,sc.name,p.name,p.state,p.greenfield?'greenfield':(a?a.group:''),a?a.city:'',
+   Math.round(potential(p)),p.lat,p.lon,
+   p.alternatives.map(id=>{const l=locById[id];return l?l.group:''}).filter(Boolean).join(' | ')]);})));
+ if(!rows.length){ui.alert('No places yet.');return;}
+ download('places.csv',csv([['Case','Scenario','Place','State','Assigned dealer','City','Potential (pop)','Lat','Lon','Alternatives'],...rows]),'text/csv');};
+// ================ filter UI ================
+function chips(el,vals,set,labels){const nodes=vals.map(v=>{const c=document.createElement('span');
+ c.className='chip on';c.textContent=labels?.[v]||v;
+ c.onclick=()=>{set.has(v)?set.delete(v):set.add(v);c.classList.toggle('on');render();};
+ $(el).appendChild(c);return c;});
+ return{all:()=>{vals.forEach(v=>set.add(v));nodes.forEach(n=>n.classList.add('on'));render();},
+  none:()=>{set.clear();nodes.forEach(n=>n.classList.remove('on'));render();}};}
+function allNone(el,api){const a=document.createElement('a');a.textContent='All';a.onclick=api.all;
+ const b=document.createElement('a');b.textContent='None';b.onclick=api.none;$(el).appendChild(a);$(el).appendChild(b);}
+allNone('alnOwn',chips('fOwn',['Private / Family','OEM-captive','International group','Independent','Other'],state.own,
+ {'Private / Family':'Family','OEM-captive':'OEM-captive','International group':'Int. group','Independent':'Independent','Other':'Other'}));
+chips('fType',['group','independent'],state.dtype,{'group':'Dealer groups','independent':'Independent'});
+['all','yes','no'].forEach(v=>{const c=document.createElement('span');c.className='chip'+(v==='all'?' on':'');
+ c.textContent=v[0].toUpperCase()+v.slice(1);
+ c.onclick=()=>{state.cn=v;[...$('fCn').children].forEach(x=>x.classList.remove('on'));c.classList.add('on');render();};
+ $('fCn').appendChild(c);});
+chips('fPrio',['A','B','C','–'],state.prios);
+const ALL_BRANDS=[...new Set(LOCATIONS.flatMap(l=>l.brands))].sort((a,b)=>a.localeCompare(b));
+const GROUP_META={};
+function rebuildGroupMeta(){for(const k in GROUP_META)delete GROUP_META[k];
+ LOCATIONS.forEach(l=>{GROUP_META[l.group]=GROUP_META[l.group]||{m:l.market,n:0,t:l.dtype};GROUP_META[l.group].n++;});}
+rebuildGroupMeta();
+ALL_BRANDS.forEach(b=>{for(const id of ['aMust','aMustNot']){const o=document.createElement('option');o.value=b;o.textContent=($(id).id==='aMust'?'Must sell: ':'Not sell: ')+b;$(id).appendChild(o);}});
+function buildBrandMulti(q){$('fBrand').innerHTML='';
+ ALL_BRANDS.filter(i=>!q||i.toLowerCase().includes(q.toLowerCase())).forEach(i=>{
+  const d=document.createElement('label');d.className='opt';
+  const cb=document.createElement('input');cb.type='checkbox';cb.checked=state.brands.has(i);
+  cb.onchange=()=>{cb.checked?state.brands.add(i):state.brands.delete(i);render();};
+  d.appendChild(cb);d.appendChild(document.createTextNode(i));$('fBrand').appendChild(d);});}
+function groupRow(g,mk){const d=document.createElement('label');d.className='opt';
+ const cb=document.createElement('input');cb.type='checkbox';cb.checked=state.groups.has(g);
+ cb.onchange=()=>{cb.checked?state.groups.add(g):state.groups.delete(g);render();};
+ d.appendChild(cb);
+ const mb=document.createElement('span');mb.className='mk';mb.style.background=CFG.colors.market[mk];mb.textContent=mk;d.appendChild(mb);
+ d.appendChild(document.createTextNode(g.length>26?g.slice(0,25)+'…':g));
+ const cn2=document.createElement('span');cn2.className='cnt';cn2.textContent=GROUP_META[g].n;d.appendChild(cn2);
+ return d;}
+function syncGroups(){const q=$('groupQ').value.toLowerCase();$('fGroup').innerHTML='';
+ for(const mk of ['CZ','SK','CH','AT']){
+  const gs=Object.keys(GROUP_META).filter(g=>GROUP_META[g].m===mk&&GROUP_META[g].t==='group'&&(!q||g.toLowerCase().includes(q))).sort();
+  if(!gs.length)continue;
+  const sub=document.createElement('div');sub.className='sub';sub.textContent=CFG.labels.market[mk];$('fGroup').appendChild(sub);
+  gs.forEach(g=>$('fGroup').appendChild(groupRow(g,mk)));}
+ // independents only when searching (901 entries otherwise)
+ if(q.length>=2){
+  const ind=Object.keys(GROUP_META).filter(g=>GROUP_META[g].t==='independent'&&g.toLowerCase().includes(q)).sort().slice(0,40);
+  if(ind.length){const sub=document.createElement('div');sub.className='sub';sub.textContent='Independent dealers';$('fGroup').appendChild(sub);
+   ind.forEach(g=>$('fGroup').appendChild(groupRow(g,GROUP_META[g].m)));}}
+ else{const hint=document.createElement('div');hint.className='sub';hint.style.fontWeight='400';
+  hint.textContent='Type 2+ letters to search the 901 independent dealers…';$('fGroup').appendChild(hint);}}
+function multiAllNone(el,items,set,rebuild){
+ const a=document.createElement('a');a.textContent='All';a.onclick=()=>{items().forEach(i=>set.add(i));rebuild();render();};
+ const b=document.createElement('a');b.textContent='None';b.onclick=()=>{set.clear();rebuild();render();};
+ $(el).appendChild(a);$(el).appendChild(b);}
+buildBrandMulti('');syncGroups();
+multiAllNone('alnBrand',()=>ALL_BRANDS,state.brands,()=>buildBrandMulti($('brandQ').value));
+multiAllNone('alnGroup',()=>Object.keys(GROUP_META),state.groups,syncGroups);
+$('brandQ').oninput=e=>buildBrandMulti(e.target.value);
+$('groupQ').oninput=()=>syncGroups();
+$('q').oninput=e=>{state.q=e.target.value.trim();render();};
+$('colorBy').onchange=e=>{state.colorBy=e.target.value;render();};
+// panel segments
+function setSeg(i){state.mode=i;
+ document.querySelectorAll('#seg div').forEach((x,k)=>x.classList.toggle('on',k===i));
+ ['m0','m1','m2'].forEach((id,k)=>$(id).style.display=k===i?'':'none');
+ renderDrawer();}
+document.querySelectorAll('#seg div').forEach(d=>d.onclick=()=>setSeg(+d.dataset.m));
+$('panelBtn').onclick=()=>$('panel').classList.toggle('hidden');
+// layers wiring
+$('tHeat').onchange=e=>{state.heat=e.target.checked;$('heatCtl').style.display=state.heat?'':'none';render();};
+$('hRad').oninput=e=>{state.hBw=+e.target.value;$('hRadVal').textContent=state.hBw+' km';render();};
+$('hInt').oninput=e=>{state.hOp=+e.target.value/100;$('hIntVal').textContent=e.target.value+'%';render();};
+$('tPop').onchange=e=>{state.pop=e.target.checked;$('popCtl').style.display=state.pop?'':'none';renderPop();};
+$('pRad').oninput=e=>{state.pBw=+e.target.value;$('pRadVal').textContent=state.pBw+' km';renderPop();};
+$('pInt').oninput=e=>{state.pOp=+e.target.value/100;$('pIntVal').textContent=e.target.value+'%';renderPop();};
+$('tWeight').onchange=e=>{state.weight=e.target.checked;activeSc().places.forEach(p=>p._pot=null);renderPop();updateKPI();renderDrawer();};
+$('tCatch').onchange=e=>{state.catch=e.target.checked;$('radRow').style.display=state.catch?'':'none';render();};
+$('radius').oninput=e=>{state.radius=+e.target.value;$('radVal').textContent=state.radius+' km';render();};
+$('tDrive').onchange=e=>{state.drive=e.target.checked;if(!state.drive)hideIso();};
+$('tWhite').onchange=e=>{state.white=e.target.checked;whiteRedraw();};
+$('tCities').onchange=e=>{state.cities=e.target.checked;renderCities();};
+$('tGraph').onchange=e=>{if(e.target.checked){buildGraphLayer();graphLayer.addTo(map);}else map.removeLayer(graphLayer);};
+$('tPlan').onchange=e=>{state.plan=e.target.checked;$('planbar').classList.toggle('on',state.plan);
+ map.getContainer().style.cursor=state.plan?'crosshair':'';};
+$('tT').oninput=e=>{state.T=+e.target.value;$('tTv').textContent=state.T+' min';
+ WS.ui.T=state.T;activeSc().places.forEach(p=>p._pot=null);
+ if(map.hasLayer(isoLayer))hideIso();renderArea();updateKPI();renderDrawer();save();};
+$('kpiMeasure').onchange=e=>{state.measure=e.target.value;WS.ui.measure=state.measure;updateKPI();save();};
+function downloadCsv(name,head,rows){
+ const esc=v=>{v=String(v??'');return/[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+ const csv=[head,...rows].map(r=>r.map(esc).join(',')).join('\n');
+ const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+ a.download=name;a.click();}
+// ================ market fragmentation ================
+function fragData(topN){
+ const rows=ENG.DM.filter(m=>C().markets.includes(m.c)).map(m=>({name:m.name,c:m.c,pop:m.pop}))
+  .sort((a,b)=>b.pop-a.pop);
+ const total=rows.reduce((s,r)=>s+r.pop,0);
+ const n=Math.min(topN,rows.length);
+ let cum=0;const out=[];
+ for(let i=0;i<n;i++){cum+=rows[i].pop;
+  out.push({rank:i+1,name:rows[i].name,market:rows[i].c,pop:rows[i].pop,
+   cumPop:cum,cumPct:total?cum/total*100:0,incPct:total?rows[i].pop/total*100:0});}
+ return{rows:out,total,nAll:rows.length};}
+function fragBands(rows){ // group into ~3 bands by avg incremental %, mimicking the reference slide
+ if(rows.length<6)return[{from:0,to:rows.length-1,avg:rows.length?(rows[rows.length-1].cumPct/rows.length):0}];
+ const b1=Math.max(1,Math.round(rows.length*0.25)),b2=Math.max(b1+1,Math.round(rows.length*0.65));
+ const avg=(a,b)=>{let s=0;for(let i=a;i<b;i++)s+=rows[i].incPct;return s/(b-a);};
+ return[{from:0,to:b1,avg:avg(0,b1)},{from:b1,to:b2,avg:avg(b1,b2)},{from:b2,to:rows.length,avg:avg(b2,rows.length)}];}
+// ---- scenario coverage build-up (greedy marginal ordering) ----
+function placeCoverSet(p,T,markets){ // EXACT computeCoverage semantics per single site
+ const dist=ENG.dijkstra(ENG.links(p.lat,p.lon));
+ const set=[];
+ for(let k=0;k<ENG.DM.length;k++){const m=ENG.DM[k];
+  if(!markets.includes(m.c))continue;
+  let t=m.node!=null?dist[m.node]:Infinity;
+  if(t>T){const d=ENG.havKm(m.lat,m.lon,p.lat,p.lon);
+   if(d<40){const td=d*1.35/52*60;if(td<t)t=td;}}
+  if(t<=T)set.push(k);}
+ return set;}
+function covData(caseObj,sc,T){
+ const markets=caseObj.markets;
+ let TOT=0;for(let k=0;k<ENG.DM.length;k++){const m=ENG.DM[k];
+  if(markets.includes(m.c))TOT+=m.w*(state.weight?m.rw:1);}
+ const wOf=k=>{const m=ENG.DM[k];return m.w*(state.weight?m.rw:1);};
+ const items=sc.places.map(p=>({p,set:placeCoverSet(p,T,markets)}));
+ const covered=new Uint8Array(ENG.DM.length);
+ const rows=[];let cumW=0;
+ while(rows.length<items.length){
+  let best=null,bg=-1;
+  for(const it of items){if(it._done)continue;
+   let g=0;for(const k of it.set)if(!covered[k])g+=wOf(k);
+   if(g>bg){bg=g;best=it;}}
+  best._done=true;
+  for(const k of best.set)if(!covered[k]){covered[k]=1;cumW+=wOf(k);}
+  const a=best.p.assigned&&best.p.assigned!=='GF'?locById[best.p.assigned]:null;
+  rows.push({rank:rows.length+1,name:best.p.name,
+   dealer:best.p.greenfield?'greenfield':(a?a.city:(best.p.state==='short'&&best.p.suggested?locById[best.p.suggested]?.city+' (sugg.)':'open')),
+   gainW:bg,gainPP:TOT?bg/TOT*100:0,cumW,cumPct:TOT?cumW/TOT*100:0});}
+ return{rows,TOT,label:caseObj.name+' · '+sc.name,markets};}
+let covPick=[]; // [{ci,si}]
+function covScenList(){
+ const out=[];
+ WS.cases.forEach((c,ci)=>c.scenarios.forEach((sc,si)=>out.push({ci,si,c,sc,n:sc.places.length})));
+ return out;}
+function covRenderSel(){
+ const el=$('covSel');el.innerHTML='';
+ covScenList().forEach(({ci,si,c,sc,n})=>{
+  const on=covPick.some(x=>x.ci===ci&&x.si===si);
+  const chip=document.createElement('span');chip.className='chip'+(on?' sel':'');
+  chip.textContent=`${c.name} · ${sc.name} (${n})`;
+  chip.onclick=()=>{
+   if(on)covPick=covPick.filter(x=>!(x.ci===ci&&x.si===si));
+   else covPick.push({ci,si});
+   covRenderSel();covRender();};
+  el.appendChild(chip);});}
+const COV_COLS=['#00CD55','#008CC8','#C07A1E','#7a5aa3','#d9534f'];
+function covCurves(){
+ return covPick.map(({ci,si})=>{
+  const c=WS.cases[ci],sc=c&&c.scenarios[si];
+  if(!c||!sc)return null;
+  const d=covData(c,sc,state.T);d.sc=sc;d.caseName=c.name;return d;}).filter(Boolean).filter(d=>d.rows.length);}
+function covBandCuts(d){ // clamped per-scenario cumulative cuts
+ const n=d.rows.length;
+ if(n<3)return null;
+ const bd=d.sc.bands||(d.sc.bands={a:3,b:5});
+ let a=Math.min(Math.max(1,bd.a),n-2),b=Math.min(Math.max(a+1,bd.b),n-1);
+ return{a,b};}
+window.setCovBands=(a,b)=>{
+ const curves=covCurves();if(curves.length!==1)return;
+ const n=curves[0].rows.length;
+ a=Math.min(Math.max(1,Math.round(a)),n-2);
+ b=Math.min(Math.max(a+1,Math.round(b)),n-1);
+ curves[0].sc.bands={a,b};save();covRender();};
+function covRender(){
+ const curves=covCurves();
+ $('fragTitle').textContent='Coverage build-up — places ordered by marginal gain (≤'+state.T+' min'+(state.weight?', weighted':'')+')';
+ if(!curves.length){
+  $('fragChart').innerHTML='<div class="hint" style="padding:60px 20px;text-align:center">No places in the selected scenario(s) yet.<br>Add places in the Plan tab, or tick a scenario above.</div>';
+  $('fragTable').innerHTML='';if($('fragCaption'))$('fragCaption').textContent='';return;}
+ const W=872,H=390,PL=52,PR=20,PT=26,PB=34,plotW=W-PL-PR,plotH=H-PT-PB;
+ const maxN=Math.max(...curves.map(d=>d.rows.length));
+ const maxY=Math.min(100,Math.ceil(Math.max(20,...curves.map(d=>d.rows[d.rows.length-1].cumPct))/10)*10);
+ const x=i=>PL+plotW*(maxN<=1?0:i/(maxN-1));
+ const y=v=>PT+plotH*(1-v/maxY);
+ let grid='';for(let v=0;v<=maxY;v+=Math.max(10,Math.round(maxY/5/10)*10)){const yy=y(v);
+  grid+=`<line x1="${PL}" y1="${yy}" x2="${W-PR}" y2="${yy}" stroke="#E3E8EC"/><text x="${PL-8}" y="${yy+3}" font-size="9.5" text-anchor="end" fill="#7C8A97">${v}%</text>`;}
+ const single=curves.length===1;
+ let bandRects='',bandLabels='',dividers='';
+ const cuts=single?covBandCuts(curves[0]):null;
+ if(cuts){
+  const rows0=curves[0].rows,n=rows0.length;
+  const segs=[{from:0,to:cuts.a},{from:cuts.a,to:cuts.b},{from:cuts.b,to:n}];
+  const bandCols=['#E8F6EE','#F1FAF4','#F4F6F7'];
+  const bx=idx=>idx<=0?x(0):idx>=n?x(n-1):(x(idx-1)+x(idx))/2; // boundary between points
+  segs.forEach((sg,i)=>{const x0=bx(sg.from),x1=bx(sg.to);
+   const avg=sg.to>sg.from?rows0.slice(sg.from,sg.to).reduce((s2,r)=>s2+r.gainPP,0)/(sg.to-sg.from):0;
+   bandRects+=`<rect x="${x0}" y="${PT}" width="${Math.max(0,x1-x0)}" height="${plotH}" fill="${bandCols[i%3]}"/>`;
+   bandLabels+=`<text x="${(x0+x1)/2}" y="${PT-8}" font-size="9.5" text-anchor="middle" fill="#3f8f5c" font-weight="600">ø +${avg.toFixed(1)}% per place (Top ${sg.to})</text>`;});
+  [['bndA',cuts.a],['bndB',cuts.b]].forEach(([id,cut])=>{const dx=bx(cut);
+   dividers+=`<line x1="${dx}" y1="${PT}" x2="${dx}" y2="${PT+plotH}" stroke="#2C7A4B" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <rect id="${id}" x="${dx-7}" y="${PT}" width="14" height="${plotH}" fill="transparent" style="cursor:ew-resize"/>
+    <circle cx="${dx}" cy="${PT+10}" r="6" fill="#2C7A4B" pointer-events="none"/>
+    <text x="${dx}" y="${PT+13.5}" font-size="8.5" font-weight="700" text-anchor="middle" fill="#fff" pointer-events="none">⇔</text>`;});}
+ let curvesSvg='',legend='';
+ curves.forEach((d,ci)=>{const col=COV_COLS[ci%COV_COLS.length];
+  let path='';d.rows.forEach((r,i)=>{path+=(i?'L':'M')+x(i)+' '+y(r.cumPct)+' ';});
+  curvesSvg+=`<path d="${path}" fill="none" stroke="${col}" stroke-width="2.5"/>`;
+  d.rows.forEach((r,i)=>{curvesSvg+=`<circle cx="${x(i)}" cy="${y(r.cumPct)}" r="3.2" fill="#023F40" stroke="#fff" stroke-width="1"/>`;
+   if(single)curvesSvg+=`<text x="${x(i)+5}" y="${y(r.cumPct)-5}" font-size="8.5" fill="#33424A" transform="rotate(-28 ${x(i)+5} ${y(r.cumPct)-5})">${r.name} +${r.gainPP.toFixed(1)}%</text>`;});
+  const last=d.rows[d.rows.length-1];
+  if(!single)curvesSvg+=`<text x="${x(d.rows.length-1)+6}" y="${y(last.cumPct)+3}" font-size="9" font-weight="600" fill="${col}">${last.cumPct.toFixed(0)}%</text>`;
+  legend+=`<text x="${PL+6+ci*260}" y="${H-4}" font-size="9.5" fill="${col}" font-weight="600">— ${d.label} (${d.rows.length} places → ${last.cumPct.toFixed(0)}%)</text>`;});
+ $('fragChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:100%">
+  ${bandRects}${grid}${bandLabels}
+  <line x1="${PL}" y1="${PT+plotH}" x2="${W-PR}" y2="${PT+plotH}" stroke="#B9C3CA"/>
+  ${curvesSvg}${dividers}${legend}</svg>`;
+ if(cuts)wireBandDrag(curves[0],x,PL,plotW,maxN);
+ const d0=curves[0];
+ const pk=n=>d0.rows[Math.min(n-1,d0.rows.length-1)].cumPct.toFixed(1);
+ const c0=covBandCuts(d0)||{a:Math.min(3,d0.rows.length),b:Math.min(5,d0.rows.length)};
+ let th=`<tr><th colspan="6" style="text-align:left;background:#EFF5F8">${d0.label}
+   <span style="float:right;font-weight:600;color:#2C7A4B">Top ${c0.a}: ${pk(c0.a)}% · Top ${c0.b}: ${pk(c0.b)}% · Top ${d0.rows.length}: ${pk(d0.rows.length)}%</span></th></tr>
+  <tr><th>#</th><th>Place</th><th>Dealer</th><th>Marginal gain</th><th>Cumulative</th><th></th></tr>`;
+ d0.rows.forEach(r=>{th+=`<tr><td>${r.rank}</td><td><b>${r.name}</b></td><td>${r.dealer}</td><td>+${r.gainPP.toFixed(1)}%</td><td>${r.cumPct.toFixed(1)}%</td><td>${Math.round(r.gainW/1000)}k</td></tr>`;});
+ if(curves.length>1)th+=`<tr><td colspan="6" class="hint">Table shows the first selected scenario. Curves compare all selections; each uses its own case's markets.</td></tr>`;
+ $('fragTable').innerHTML=th;
+ {const names=curves.map(d=>(d.caseName||'')+(d.sc?' · '+d.sc.name:'')).filter(Boolean).join(', ');
+  const cap=$('fragCaption');
+  if(cap)cap.innerHTML=`Cumulative share of demand covered as places are added best-first · ≤${state.T} min drive time${state.weight?', weighted by regional motorization':''}${names?' · '+names:''}`
+   +(curves.length===1&&curves[0].rows.length>=3?' &nbsp;·&nbsp; <span style="color:#2C7A4B">drag the dashed lines in the chart to adjust the bands</span>':'');}
+ return curves;}
+function wireBandDrag(d,xfun,PL,plotW,maxN){
+ const svg=$('fragChart').querySelector('svg');
+ const n=d.rows.length,cuts=covBandCuts(d);
+ const toCut=clientX=>{
+  const r=svg.getBoundingClientRect();
+  const vx=(clientX-r.left)/r.width*872; // viewBox coords
+  // nearest boundary index: boundary i sits between points i-1 and i
+  let best=1,bd=1e9;
+  for(let i=1;i<n;i++){const bxp=(xfun(i-1)+xfun(i))/2;
+   if(Math.abs(bxp-vx)<bd){bd=Math.abs(bxp-vx);best=i;}}
+  return best;};
+ [['bndA','a'],['bndB','b']].forEach(([id,key])=>{
+  const h=svg.querySelector('#'+id);if(!h)return;
+  h.addEventListener('pointerdown',e=>{
+   e.preventDefault();h.setPointerCapture(e.pointerId);
+   const move=ev=>{const c=toCut(ev.clientX);
+    const cur=covBandCuts(d);
+    if(key==='a'&&c!==cur.a&&c>=1&&c<cur.b){d.sc.bands.a=c;covRenderLight(d);}
+    if(key==='b'&&c!==cur.b&&c>cur.a&&c<=n-1){d.sc.bands.b=c;covRenderLight(d);}};
+   const up=()=>{h.removeEventListener('pointermove',move);h.removeEventListener('pointerup',up);
+    save();covRender();};
+   h.addEventListener('pointermove',move);h.addEventListener('pointerup',up);});});}
+let covLightTm=null;
+function covRenderLight(){clearTimeout(covLightTm);covLightTm=setTimeout(covRender,40);}
+let fragMode='cov';
+function fragSwitch(m){
+ fragMode=m;
+ document.querySelectorAll('#fragMode .chip').forEach(c=>c.classList.toggle('sel',c.dataset.m===m));
+ $('covSelWrap').style.display=m==='cov'?'':'none';
+ $('fragMkWrap').style.display=m==='pop'?'':'none';
+ $('fragN').style.display=m==='pop'?'':'none';$('fragNLab').style.display=m==='pop'?'':'none';
+ if(m==='cov'){covRenderSel();covRender();}
+ else{$('fragTitle').textContent='Population fragmentation — municipalities ranked by size';fragRender();}}
+document.querySelectorAll('#fragMode .chip').forEach(c=>c.onclick=()=>fragSwitch(c.dataset.m));
+function fragRender(){
+ const N=+$('fragN').value,d=fragData(N);
+ $('fragMk').textContent=C().markets.join(' + ');
+ const W=852,H=390,PL=52,PR=20,PT=18,PB=34;
+ const plotW=W-PL-PR,plotH=H-PT-PB;
+ const maxY=Math.max(10,d.rows.length?d.rows[d.rows.length-1].cumPct:0);
+ const x=i=>PL+plotW*(d.rows.length<=1?0:i/(d.rows.length-1));
+ const y=v=>PT+plotH*(1-v/Math.min(100,Math.ceil(maxY/10)*10));
+ const yMax=Math.min(100,Math.ceil(maxY/10)*10);
+ const yTicks=[];for(let v=0;v<=yMax;v+=Math.max(10,Math.round(yMax/5/10)*10))yTicks.push(v);
+ let grid='';yTicks.forEach(v=>{const yy=y(v);grid+=`<line x1="${PL}" y1="${yy}" x2="${W-PR}" y2="${yy}" stroke="#E3E8EC" stroke-width="1"/><text x="${PL-8}" y="${yy+3}" font-size="9.5" text-anchor="end" fill="#7C8A97">${v}%</text>`;});
+ const bands=fragBands(d.rows);
+ const bandCols=['#E8F6EE','#F1FAF4','#F4F6F7'];
+ let bandRects='',bandLabels='';
+ bands.forEach((b,i)=>{const x0=x(b.from),x1=x(Math.min(b.to,d.rows.length-1))+(b.to>=d.rows.length-1?0:0);
+  bandRects+=`<rect x="${x0}" y="${PT}" width="${Math.max(0,x1-x0)}" height="${plotH}" fill="${bandCols[i%3]}"/>`;
+  bandLabels+=`<text x="${(x0+x1)/2}" y="${PT-5}" font-size="9.5" text-anchor="middle" fill="#3f8f5c" font-weight="600">ø ~${b.avg.toFixed(1)}%/city</text>`;});
+ let path='';d.rows.forEach((r,i)=>{path+=(i?'L':'M')+x(i)+' '+y(r.cumPct)+' ';});
+ let pts='',labels='';
+ d.rows.forEach((r,i)=>{const px=x(i),py=y(r.cumPct);
+  pts+=`<circle cx="${px}" cy="${py}" r="3.4" fill="#023F40" stroke="#fff" stroke-width="1"/>`;
+  if(i<12||i%Math.ceil(d.rows.length/22)===0||i===d.rows.length-1)
+   labels+=`<text x="${px+5}" y="${py-5}" font-size="8.5" fill="#33424A" transform="rotate(-28 ${px+5} ${py-5})">${r.name} +${r.incPct.toFixed(1)}%</text>`;});
+ $('fragChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:100%">
+  ${bandRects}${grid}${bandLabels}
+  <line x1="${PL}" y1="${PT+plotH}" x2="${W-PR}" y2="${PT+plotH}" stroke="#B9C3CA"/>
+  <path d="${path}" fill="none" stroke="#00CD55" stroke-width="2.5"/>${pts}${labels}
+  <text x="${PL}" y="${H-6}" font-size="9.5" fill="#7C8A97">0</text>
+  <text x="${W-PR}" y="${H-6}" font-size="9.5" text-anchor="end" fill="#7C8A97">${d.rows.length} municipalities</text>
+  </svg>`;
+ if($('fragCaption'))$('fragCaption').textContent=`Share of national demand by municipality size band — market structure view (no drive-time model involved).`;
+ let th='<tr><th>#</th><th>Municipality</th><th>Mkt</th><th>Population</th><th>Cum. %</th><th>Incr. %</th></tr>';
+ d.rows.forEach(r=>{th+=`<tr><td>${r.rank}</td><td>${r.name}</td><td>${mkBadge(r.market)}</td><td>${r.pop.toLocaleString()}</td><td>${r.cumPct.toFixed(1)}%</td><td>+${r.incPct.toFixed(2)}%</td></tr>`;});
+ $('fragTable').innerHTML=th;
+ return d;}
+$('fragBtn').onclick=()=>{
+ const ci=WS.active,si=C().activeSc;
+ if(!covPick.length)covPick=[{ci,si}];
+ fragSwitch(fragMode);$('fragDlg').showModal();};
+$('fragN').onchange=fragRender;
+$('fragCsv').onclick=()=>{
+ if(fragMode==='cov'){
+  const curves=covCurves();
+  if(!curves.length){ui.alert('No places in the selected scenario(s).');return;}
+  const aoa=[];
+  curves.forEach((d,i)=>{
+   if(i)aoa.push([]);
+   aoa.push(['Category',...d.rows.map(r=>r.name)]);
+   aoa.push(['100%=',...d.rows.map(()=>'')]);
+   aoa.push(['Series',...d.rows.map(()=>'')]);
+   aoa.push([d.label,...d.rows.map(r=>+r.cumPct.toFixed(1))]);});
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:30},...Array.from({length:Math.max(...curves.map(d=>d.rows.length))},()=>({wch:13}))];
+  XLSX.utils.book_append_sheet(wb,ws,'thinkcell data');
+  const detail=[['Scenario','Rank','Place','Dealer','Marginal gain (pop)','Marginal gain (pp)','Cumulative (pop)','Cumulative %']];
+  curves.forEach(d=>d.rows.forEach(r=>detail.push([d.label,r.rank,r.name,r.dealer,Math.round(r.gainW),+r.gainPP.toFixed(2),Math.round(r.cumW),+r.cumPct.toFixed(2)])));
+  const ws2=XLSX.utils.aoa_to_sheet(detail);
+  ws2['!cols']=[{wch:26},{wch:6},{wch:18},{wch:22},{wch:16},{wch:14},{wch:16},{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws2,'detail');
+  XLSX.writeFile(wb,'coverage_buildup.xlsx');return;}
+ const d=fragData(+$('fragN').value);
+ // thinkcell paste-sheet layout: Category row (1..N), 100%= row, Series caption row, data row
+ const aoa=[
+  ['Category',...d.rows.map(r=>r.rank)],
+  ['100%=',...d.rows.map(()=>'')],
+  ['Series',...d.rows.map(()=>'')],
+  ['Addressable market (TAM 1)',...d.rows.map(r=>r.cumPop)]];
+ const wb=XLSX.utils.book_new();
+ const ws=XLSX.utils.aoa_to_sheet(aoa);
+ ws['!cols']=[{wch:26},...d.rows.map(()=>({wch:11}))];
+ XLSX.utils.book_append_sheet(wb,ws,'thinkcell data');
+ // second sheet: full detail table for reference
+ const detail=[['Rank','Municipality','Market','Population','Cumulative population','Cumulative %','Incremental %'],
+  ...d.rows.map(r=>[r.rank,r.name,r.market,r.pop,r.cumPop,+r.cumPct.toFixed(2),+r.incPct.toFixed(2)])];
+ const ws2=XLSX.utils.aoa_to_sheet(detail);
+ ws2['!cols']=[{wch:6},{wch:22},{wch:6},{wch:12},{wch:16},{wch:10},{wch:10}];
+ XLSX.utils.book_append_sheet(wb,ws2,'detail');
+ XLSX.writeFile(wb,'market_fragmentation.xlsx');};
+
+// ================ persistence of controls ================
+const UI_CTL=[['colorBy','colorBy','v'],['tWeight','weight','c'],['tHeat','heat','c'],['hRad','hBw','n'],
+ ['hInt','hOp','n'],['tPop','pop','c'],['pRad','pBw','n'],['pInt','pOp','n'],['tCatch','catch','c'],
+ ['radius','radius','n'],['tDrive','drive','c'],['tWhite','white','c'],['tCities','cities','c'],['tGraph','graph','c']];
+const PLAN_CTL=[['oObj','oObj','v'],['oN','oN','n'],['oPct','oPct','n'],['oSpace','oSpace','n'],
+ ['oMinD','oMinD','n'],['oSrc','oSrc','v'],['oLive','oLive','c'],
+ ['aCn','aCn','v'],['aPrio','aPrio','v'],['aMust','aMust','v'],['aMustNot','aMustNot','v'],['aMaxG','aMaxG','n']];
+UI_CTL.forEach(([id,key,kind])=>$(id).addEventListener('change',e=>{
+ WS.ui[key]=kind==='c'?e.target.checked:(kind==='n'?+e.target.value:e.target.value);save();}));
+PLAN_CTL.forEach(([id,key,kind])=>$(id).addEventListener('change',e=>{
+ C().plan[key]=kind==='c'?e.target.checked:(kind==='n'?+e.target.value:e.target.value);save();}));
+function applyCtl(id,val,kind){const el=$(id);
+ if(kind==='c')el.checked=!!val;else el.value=val;
+ el.dispatchEvent(new Event(el.type==='range'?'input':'change'));
+ if(el.type==='range')el.dispatchEvent(new Event('change'));
+ if(el.oninput&&el.type!=='range')el.oninput({target:el});
+ if(el.onchange)el.onchange({target:el});}
+function applyPersisted(){
+ APPLYING=true;
+ try{UI_CTL.forEach(([id,key,kind])=>applyCtl(id,WS.ui[key],kind));applyPlanCtls();}
+ finally{APPLYING=false;}}
+function applyPlanCtls(){
+ APPLYING=true;clearTimeout(liveTm);
+ try{PLAN_CTL.forEach(([id,key,kind])=>applyCtl(id,C().plan[key],kind));}
+ finally{APPLYING=false;}}
+// ================ dialog UX: click-outside + close buttons ================
+document.querySelectorAll('dialog').forEach(dlg=>{
+ dlg.addEventListener('click',e=>{
+  if(e.target!==dlg)return; // only true backdrop clicks land directly on the dialog element
+  if(dlg.id==='uiDlg'){$('uiCancel').click();return;}
+  dlg.close();});
+ if(!dlg.querySelector('.dlgX')&&dlg.id!=='uiDlg'){
+  const h=dlg.querySelector('h3');
+  const x=document.createElement('span');x.className='dlgX';x.textContent='✕';
+  x.onclick=()=>dlg.close();
+  (h||dlg).appendChild(x);}});
+// ================ init ================
+syncCase();
+applyPersisted();

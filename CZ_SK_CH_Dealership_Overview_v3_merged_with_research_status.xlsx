@@ -1,0 +1,102 @@
+# -*- coding: utf-8 -*-
+"""ingest_pplx.py — parse a Perplexity Deep Research result, match vs dealer DB, emit merge plan.
+Usage: python3 ingest_pplx.py <result.md> <market>
+Outputs: /tmp/merge_<market>_<n>.json with {brand:{total_s,total_sv,src, rows:[{name,company,street,city,psc,sales,service,match_id|None}]}}
+"""
+import sys, re, json, unicodedata
+import pandas as pd
+
+MD, MARKET = sys.argv[1], sys.argv[2]
+raw = open(MD, encoding='utf-8').read()
+raw = raw.replace('\\&', '&').replace('\\*', '*')
+raw = re.sub(r'\[\^\d+\]', '', raw)  # footnote refs
+
+# --- load current DB ---
+f = '/mnt/user-data/outputs/CZ_SK_CH_Dealership_Overview_v3_merged_with_research_status.xlsx'
+loc = pd.read_excel(f, sheet_name='Locations', header=None)
+hdr = loc.index[loc[1].astype(str).str.strip() == '#'][0]
+loc = loc.iloc[hdr+1:, 1:8]
+loc.columns = ['num','group','market','city','address','brands','dtype']
+loc = loc[loc['market'].astype(str).str.strip() == MARKET].copy()
+loc['rid'] = loc.index
+
+def norm(s):
+    s = unicodedata.normalize('NFKD', str(s or '')).encode('ascii','ignore').decode().lower()
+    s = re.sub(r'\b(s\.?r\.?o\.?|a\.?s\.?|spol|gmbh|ag|sa|k\.?s\.?|group|holding|auto|autocentrum|motors?)\b','',s)
+    return re.sub(r'[^a-z0-9]','',s)
+def street_key(s):
+    s = unicodedata.normalize('NFKD', str(s or '')).encode('ascii','ignore').decode().lower()
+    m = re.search(r'([a-z][a-z .\-]+?)\s*(\d+[\d/a-z]*)', s)
+    return (re.sub(r'[^a-z]','',m.group(1)), m.group(2).split('/')[0]) if m else (re.sub(r'[^a-z]','',s)[:12],'')
+
+db = []
+for _, r in loc.iterrows():
+    db.append({'rid': int(r['rid']), 'g': norm(r['group']), 'n': norm(r['city']),
+               'addr': str(r['address']), 'sk': street_key(r['address']),
+               'brands': str(r['brands'])})
+
+# --- parse sections ---
+sections = re.split(r'\n##\s+', raw)
+out = {}
+for sec in sections[1:]:
+    title = sec.split('\n',1)[0].strip().strip('*').title()
+    brand = title.split('(')[0].strip()
+    if brand.lower() in ('important access notes','summary','notes','sources'): continue
+    if brand.lower().startswith(('brands with','access','important','stellantis shared','brands not','continuation','other chinese')): continue
+    if brand.lower().startswith('land rover / jaguar'): brand='Land Rover/Jaguar'
+    if brand.lower().startswith('seat'): brand='SEAT/CUPRA'
+    if brand.lower().startswith('omoda'): brand='Omoda/Jaecoo'
+    brand=re.sub(r'\s+(Slovakia|Czech Republic|Switzerland)$','',brand,flags=re.I).strip()
+    if brand.lower().startswith('fiat'): brand='Fiat'
+    if brand.lower().startswith('omoda'): brand='Omoda/Jaecoo'
+    tot = re.search(r'TOTAL[^:]*:\s*([^\n]+)', sec)
+    total_line = tot.group(1).strip() if tot else ''
+    rows = []
+    for line in sec.split('\n'):
+        if not line.strip().startswith('|'): continue
+        cells = [c.strip() for c in line.strip().strip('|').split('|')]
+        if len(cells) < 6 or set(cells[0]) <= set(':- ') or cells[0].lower().startswith('dealer name'): continue
+        name, company, street = cells[0], cells[1], cells[2]
+        pcity = cells[3]
+        # canton column shifts CH tables by one
+        off = 1 if MARKET in ('CH','AT') and len(cells) >= 8 and cells[4] and len(cells[4])<=22 and not cells[4].upper().startswith(('Y','N')) else 0
+        sales = cells[4+off].upper().startswith('Y')
+        service = cells[5+off].upper().startswith('Y') if len(cells) > 5+off else False
+        m = re.match(r'([\d ]{4,7})\s+(.+)', pcity)
+        psc, city = (m.group(1).strip(), m.group(2).strip()) if m else ('', pcity)
+        grp = cells[6+off].strip() if len(cells) > 7+off and cells[6+off] not in ('','-','—') else ''
+        rows.append({'name':name,'company':company,'street':street,'psc':psc,'city':city,
+                     'sales':sales,'service':service,'group':grp})
+    if not rows and not total_line: continue
+    # --- match ---
+    for row in rows:
+        nn, nc = norm(row['name']), norm(row['company'])
+        sk = street_key(row['street'] + ' ' + row['city'])
+        cityn = norm(row['city'])
+        bad_addr = bool(re.search(r'not retrieved|unconfirmed|not stated', str(row['street'])+str(row['company']), re.I))
+        if bad_addr: sk = ('','')
+        bl = brand.lower()
+        best = None
+        for d in db:
+            street_hit = bool(sk[0]) and len(sk[0])>3 and sk[0] in norm(d['addr']) and bool(sk[1]) and sk[1] in d['addr']
+            comp_hit = bool(nc) and len(nc)>4 and (nc in d['g'] or (d['g'] and len(d['g'])>4 and d['g'] in nc))
+            name_hit = bool(nn) and len(nn)>4 and (nn in d['n'] or (d['n'] and len(d['n'])>4 and d['n'] in nn))
+            city_hit = bool(cityn[:6]) and cityn[:6] in norm(d['addr'])
+            brand_prior = bl in d['brands'].lower()
+            if 'used cars' in d['brands'].lower() and not comp_hit: continue
+            ok = street_hit or comp_hit or (name_hit and city_hit and brand_prior)
+            score = (3 if street_hit else 0)+(2 if comp_hit else 0)+(1 if name_hit and city_hit else 0)+(1 if brand_prior else 0)
+            if ok and (best is None or score > best[0]): best = (score, d['rid'])
+        row['match'] = best[1] if best else None
+    out[brand] = {'total': total_line, 'rows': rows}
+
+n_all = sum(len(v['rows']) for v in out.values())
+n_match = sum(1 for v in out.values() for r in v['rows'] if r['match'] is not None)
+import hashlib
+tag = hashlib.md5(raw[:200].encode()).hexdigest()[:6]
+dest = f'/tmp/merge_{MARKET}_{tag}.json'
+json.dump(out, open(dest,'w'), ensure_ascii=False, indent=1)
+print(f'{dest}: {len(out)} brands, {n_all} outlets, {n_match} matched to existing DB, {n_all-n_match} new')
+for b, v in out.items():
+    m = sum(1 for r in v['rows'] if r['match'] is not None)
+    print(f"  {b:<14} {len(v['rows']):>3} rows | {m} matched, {len(v['rows'])-m} new | TOTAL: {v['total'][:70]}")

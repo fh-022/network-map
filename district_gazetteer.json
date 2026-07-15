@@ -1,0 +1,44 @@
+function makeLUT(stops){const lut=new Uint8ClampedArray(1024);
+ for(let i=0;i<256;i++){const t=i/255;let a=stops[0],b=stops[stops.length-1];
+  for(let k=0;k<stops.length-1;k++)if(t>=stops[k].t&&t<=stops[k+1].t){a=stops[k];b=stops[k+1];break;}
+  const f=(t-a.t)/((b.t-a.t)||1);
+  lut[i*4]=a.c[0]+(b.c[0]-a.c[0])*f;lut[i*4+1]=a.c[1]+(b.c[1]-a.c[1])*f;
+  lut[i*4+2]=a.c[2]+(b.c[2]-a.c[2])*f;lut[i*4+3]=255*(a.a+(b.a-a.a)*f);}return lut;}
+function distKm2(a,b){const dy=(a[0]-b[0])*111.32,dx=(a[1]-b[1])*111.32*Math.cos(a[0]*Math.PI/180);return dx*dx+dy*dy;}
+const EXPL=Float32Array.from({length:2048},(_,i)=>Math.exp(-i*9/2047));
+const DensityLayer=L.Layer.extend({
+ initialize:function(o){this.o=o;this.pts=[];this.norm=1;this._lut=makeLUT(o.stops);},
+ setData:function(p){this.pts=p;this._n();this.redraw();},
+ _n:function(){if(!this.pts.length){this.norm=1;return;}
+  const bw=this.o.bwKm,inv=1/(2*bw*bw),c2=9*bw*bw,v=[];
+  for(const a of this.pts){let s=0;for(const b of this.pts){const d2=distKm2(a,b);if(d2<c2)s+=b[2]*Math.exp(-d2*inv);}v.push(s);}
+  v.sort((x,y)=>x-y);this.norm=v[Math.min(v.length-1,Math.floor(v.length*.97))]||1;},
+ onAdd:function(m){this._map=m;this._c=L.DomUtil.create('canvas','');this._c.style.pointerEvents='none';
+  m.getPane('overlayPane').appendChild(this._c);m.on('moveend zoomend resize',this.redraw,this);
+  m.on('zoomstart',this._h,this);this.redraw();},
+ onRemove:function(m){m.off('moveend zoomend resize',this.redraw,this);m.off('zoomstart',this._h,this);L.DomUtil.remove(this._c);this._map=null;},
+ _h:function(){if(this._c)this._c.style.display='none';},
+ redraw:function(){if(!this._map)return;const m=this._map,size=m.getSize();
+  this._c.style.display='';L.DomUtil.setPosition(this._c,m.containerPointToLayerPoint([0,0]));
+  this._c.width=size.x;this._c.height=size.y;if(!this.pts.length)return;
+  const bl=4,w=Math.ceil(size.x/bl),h=Math.ceil(size.y/bl);
+  const mPP=40075016.686*Math.cos(m.getCenter().lat*Math.PI/180)/(256*Math.pow(2,m.getZoom()));
+  const kpc=mPP*bl/1000,bw=this.o.bwKm,cut=3*bw/kpc,inv=1/(2*bw*bw);
+  const P=[];for(const p of this.pts){const cp=m.latLngToContainerPoint([p[0],p[1]]);
+   const x=cp.x/bl,y=cp.y/bl;if(x<-cut||y<-cut||x>w+cut||y>h+cut)continue;P.push([x,y,p[2]]);}
+  const F=new Float32Array(w*h),c2=cut*cut,k2=kpc*kpc,sc=2047/9;
+  for(const[px,py,wg]of P){const x0=Math.max(0,Math.floor(px-cut)),x1=Math.min(w-1,Math.ceil(px+cut));
+   const y0=Math.max(0,Math.floor(py-cut)),y1=Math.min(h-1,Math.ceil(py+cut));
+   for(let y=y0;y<=y1;y++){const dy=y-py,ba=y*w;
+    for(let x=x0;x<=x1;x++){const dx=x-px,d2=dx*dx+dy*dy;if(d2>c2)continue;
+     F[ba+x]+=wg*EXPL[(d2*k2*inv*sc)|0];}}}
+  const img=new ImageData(w,h),D=img.data,L2=this._lut,g=this.o.gamma,op=this.o.opacity;
+  for(let i=0;i<w*h;i++){const v=F[i]/this.norm;if(v<=.005)continue;
+   const j=((Math.pow(Math.min(1,v),g)*255)|0)*4,o=i*4;
+   D[o]=L2[j];D[o+1]=L2[j+1];D[o+2]=L2[j+2];D[o+3]=L2[j+3]*op;}
+  const buf=document.createElement('canvas');buf.width=w;buf.height=h;
+  buf.getContext('2d').putImageData(img,0,0);
+  const ctx=this._c.getContext('2d');ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+  ctx.clearRect(0,0,size.x,size.y);ctx.drawImage(buf,0,0,size.x,size.y);}});
+const dealerHeat=new DensityLayer({bwKm:10,gamma:.55,opacity:.8,stops:CFG.heatStops});
+const popHeat=new DensityLayer({bwKm:8,gamma:.42,opacity:.85,stops:CFG.popStops});

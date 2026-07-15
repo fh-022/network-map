@@ -1,0 +1,30 @@
+# -*- coding: utf-8 -*-
+"""Assemble template_v5.html + app_v5.js + reused engine blocks + data -> dealer_network_platform.html"""
+import json, datetime
+t=open('template_v5.html',encoding='utf-8').read()
+js=open('app_v5.js',encoding='utf-8').read()
+for marker,f in [('/*@DENSITY@*/','_reuse_density.js'),('/*@ENGINE@*/','_reuse_engine.js'),('/*@DISC@*/','_reuse_disc.js')]:
+    assert marker in js
+    js=js.replace(marker,open(f,encoding='utf-8').read())
+def load(f): return json.dumps(json.load(open(f,encoding='utf-8')),ensure_ascii=False,separators=(',',':'))
+repl={
+ '/*__LOCATIONS__*/':load('locations_v5.json'),
+ '/*__GROUPS__*/':load('groups_v5.json'),
+ '/*__MUNIS__*/':load('demand_munis.json'),
+ '/*__CITIES__*/':load('cities_v4.json'),
+ '/*__WEIGHTS__*/':load('regional_weights.json'),
+ '/*__GRAPH__*/':load('road_graph.json'),
+ '/*__BUILD__*/':json.dumps({'built':datetime.date.today().isoformat(),'phase':'5a',
+   'locations':len(json.load(open('locations_v5.json'))),'munis':len(json.load(open('demand_munis.json')))}),
+}
+for k,v in repl.items():
+    assert k in js,'missing '+k
+    js=js.replace(k,v)
+js=js+'\n'+open('export_v5.js',encoding='utf-8').read()
+pgen=open('../lib/pptx/pptxgen.bundle.js',encoding='utf-8').read()
+xlsxlib=open('../lib/xlsx/xlsx.full.min.js',encoding='utf-8').read()
+assert '<!-- __SCRIPT__ -->' in t
+t=t.replace('<!-- __SCRIPT__ -->','<script>\n'+pgen+'\n</script>\n<script>\n'+xlsxlib+'\n</script>\n<script>\n'+js+'\n</script>')
+open('dealer_network_platform.html','w',encoding='utf-8').write(t)
+import os
+print('built, %.2f MB'%(os.path.getsize('dealer_network_platform.html')/1e6))

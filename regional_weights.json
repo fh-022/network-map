@@ -1,0 +1,58 @@
+# Feature Report — PowerPoint Export
+
+## What it does
+⭳ Export (top bar) generates a real, editable .pptx from the current map view — entirely inside the browser, nothing leaves the file (the PPT library is embedded; tool is now 1.17 MB).
+
+## Editability, precisely
+- **Native PowerPoint shapes** (move, restyle, retext): place markers (assigned = petrol circle with dealer initials, suggested = orange "?", open = dashed ring, greenfield = green "G"), place name labels, schematic market-area circles, dealer dots, city labels, the legend (real text), the KPI box, title, subtitle, source line.
+- **Image layers** (movable/deletable, not reshapeable): the basemap photo, coverage-gap veil, model-shaped drive-time areas, and dealer dots when >450 are in view ("auto" mode switches to keep PPT responsive; forceable either way per preset).
+
+## Colmobil look, as decided
+16:9, title at the Folienmaster position (0.57"/0.4"), subtitle line beneath, Assistant font, petrol #023F40 / green #00CD55 for all planning graphics; dealer dots keep their information-bearing colors (market/ownership per the current color-by), explained in the legend. Auto **action title** with live numbers ("8 places (5 assigned) cover 74% of demand within 30 min"), editable in the dialog or later in PPT. Auto **source & disclaimer footnote** on every slide.
+
+## Presets
+Stored in the workspace (they travel with export/import). Each ticked preset becomes one slide — tick three, get a three-slide mini-deck. Shipped defaults: **Current view** · **Places & coverage gaps** (your example) · **Proposed network (schematic)**. Every preset configures: basemap on/off, dealers (auto/shapes/image/off), places, market areas (off / schematic editable circles / model shape image), coverage gaps, city labels, legend, KPI box, custom title. Plus a **PNG (flat)** button for pasting into an existing slide.
+
+## Notes
+- Export is WYSIWYG for the current viewport: pan/zoom the map to frame the slide first.
+- Basemap capture needs the map tiles to have loaded (online). If capture fails, the slide gets a clean flat background and the footnote says so.
+- Coverage gaps and KPI follow the Analysis card's measure and ⏱ threshold — the slide always matches what you see.
+
+## Verification
+Two-slide export generated in ~1.4 s and validated by reopening the file programmatically: correct 16:9 geometry, auto-title with live coverage, 3 place markers as native shapes with correct initials at correct positions, gap veil + 1,362-dot image layers on slide 1, and slide 2 fully vector (153 native shapes, zero images). Presets persist across reload. Zero JS errors.
+
+---
+# Update — Slide Framing (all three options)
+
+**Granular zoom (easy):** the map now zooms in quarter steps (buttons, wheel, and pinch), so fine framing works everywhere, not just for export.
+
+**Region presets (mid):** the Export dialog has a Frame row: Current view · CZ · SK · CH · Case. Clicking one flies the map there so you see what you get.
+
+**Visual frame editor (pro):** "✎ Adjust…" hides the dialog and puts a crop frame on the map — drag to move, corners to resize, optional aspect lock (free / slide-wide / 16:9), exactly the picture-masking feel. Apply returns to the dialog.
+
+**The consulting twist:** the frame is saved WITH the preset as geographic bounds. A preset now means "this content, this exact frame" — the same slide is reproducible weeks later regardless of the current map view, and one export can produce a CZ slide, an SK slide, and a CH slide from three presets. During export the map briefly jumps to each stored frame to capture tiles, then returns to your view (verified: view restored exactly). "Current view" remains the default for ad-hoc WYSIWYG exports.
+
+Verified: quarter-step zoom; CZ frame chip → correct bounds stored in preset; crop editor open/apply/cancel cycle; framed export places Praha/Brno labels correctly inside the reframed map area with the geometrically correct aspect ratio; view restored after export; zero JS errors.
+
+---
+# Update — Export Review Fixes
+
+1. **Frame bug fixed.** Frames (region chips and ✎ Adjust) now apply to the selected preset immediately, no "Save preset" needed. Root cause: the frame only landed in the preset on save, so an unsaved adjustment exported the old viewport. Verified end-to-end: adjust → export without saving → output has the framed geometry.
+2. **Density exports added.** "Analysis layers" section now offers Coverage gaps, Dealer density, and Population density (rendered exactly as on the map, exported as image layers, with legend entries). Population density respects the motorization toggle.
+3. **Place labels reworked.** Assigned places now carry a two-line label: place name (bold) + the full location name beneath (e.g. "Praha / Louda Auto Praha - Karlín"); greenfield places say so. Labels get a thin white outline for readability over the map image. The initials inside the circle no longer wrap (text insets zeroed). The drawer also shows full location names now instead of first words.
+4. **Tidier dialog, centered popups.** Export options grouped into Slide / Frame / Map content / Analysis layers / Annotations; all dialogs (export, cases, scenarios, settings) now open centered.
+
+Also from my own review pass: the map zoom buttons moved to the bottom-left (they were hidden behind the Analysis card), the Places CSV now always computes potential (could export 0 before), and multi-slide exports show per-slide progress ("Rendering slide 2/3 — CZ overview…").
+
+Known limitations, stated honestly: preset order = slide order (no drag-reorder yet); density and frame captures briefly flash on the map during export, same as frame jumps; the white label outline is a newer PPT text property — on very old PowerPoint versions it degrades to plain text.
+
+---
+# Update — Label & Live-Options Fix
+- Place labels: glyph outline removed (it made thin fonts look hollow); labels now sit on a subtle semi-transparent white chip instead, with larger type (place 9.5 pt bold, dealer name 8.5 pt).
+- Root cause of the KPI bug fixed for the whole options class: every control in the export dialog now applies to the selected preset immediately and auto-saves — the "Save preset" button is gone because nothing needs it anymore. Verified: KPI toggled off and exported without any save → no KPI box in the file (the slide title legitimately still contains "% of demand" — that's the action title, controlled by the title field).
+
+---
+# Update — Label Options & Dealer Grouping
+- New "Place labels" section in the export dialog: **Style** (White box / White shadow halo / White outline / Plain) and **Size** (S/M/L), live-applied per preset like everything else.
+- Label text boxes now size themselves to their text (width computed from content, and PowerPoint "resize shape to fit text" is set, so they stay snug when you edit them later).
+- **Existing dealer dots export as one native PowerPoint group** ("Existing dealers") when in shapes mode — move, hide, or restyle them as one object, or enter the group to edit single dots. Implemented by post-processing the generated file's XML, since the generator library has no grouping API. Verified: real GROUP shape with correct bounding box and all dots as members.

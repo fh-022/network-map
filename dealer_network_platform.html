@@ -1,0 +1,110 @@
+# Perplexity Deep Research — Prompt Pack: Dealer Network Completeness (CZ / SK / CH)
+
+**How to use:** Run each prompt as a separate Deep Research query (7 runs total). Paste each result back to Claude as-is (or save as .md). The output format is designed for mechanical ingestion into the dealer database — please don't reformat results.
+
+**Priority order for tonight (if time runs short):** P1 → P2 → P5 → P3 → P6 → P4 → P7.
+
+---
+
+## PROMPT P1 — Czech Republic: Korean & Japanese volume brands
+
+You are compiling an exact, dealer-level register of authorized car dealerships in the Czech Republic. Work ONLY from official brand dealer locators and official importer websites (not blogs, not aggregators, not used-car portals). Enumerate every entry.
+
+Brands in scope: **Hyundai, Kia, Toyota, Suzuki, Mazda, Honda, Nissan, Mitsubishi**.
+
+Known official sources to start from: hyundai.com/cz/prodejci-a-servisy.html · kia.com/cz (dealer search) · toyota.cz/vyhledat-prodejce and toyotacz.com/mapall-cs.html · suzuki.cz · mazda.cz · honda.cz · nissan.cz · mitsubishi-motors.cz — use each brand's official locator; if a locator is technically inaccessible, say so explicitly for that brand and use the importer's official dealer list page instead.
+
+For EACH brand output:
+1. One line: `TOTAL <Brand> CZ: <n> sales outlets, <m> service-only outlets (source URL, accessed <date>)`
+2. One markdown table with EVERY outlet:
+
+| Dealer name | Legal company | Street | Postal code + City | New-car sales (Y/N) | Service (Y/N) | Source URL |
+
+Rules: preserve Czech diacritics exactly; mark sales vs service-only precisely as the locator distinguishes them; do NOT invent or estimate entries — an incomplete but accurate list beats a complete-looking guessed one; if the locator shows more entries than you can enumerate, list what you can and state "enumerated X of Y". Do not summarize; the full table is the deliverable.
+
+---
+
+## PROMPT P2 — Czech Republic: Chinese brands (all of them)
+
+You are compiling an exact, dealer-level register of authorized dealerships for CHINESE car brands in the Czech Republic, as of today. Work only from official brand/importer locators and official importer press releases.
+
+Brands in scope: **MG, BYD, Omoda, Jaecoo, Dongfeng, GWM (Great Wall/Ora/Wey), Leapmotor, Xpeng, BAIC, Hongqi, Lynk & Co, Zeekr, Voyah, Seres/DFSK, Maxus, plus any other Chinese brand with an active authorized sales network in CZ**.
+
+For EACH brand output:
+1. `TOTAL <Brand> CZ: <n> sales outlets, <m> service points (source URL, accessed <date>)` — if the brand has NO authorized network in CZ, state that in one line.
+2. Full outlet table:
+
+| Dealer name | Legal company | Street | Postal code + City | New-car sales (Y/N) | Service (Y/N) | Operated by dealer group (name if known) | Source URL |
+
+Extra: where an outlet is operated by a known dealer group (e.g., Louda Auto, AURES, Emil Frey ČR, AGROTEC), name the group — this matters. Same accuracy rules as before: official sources only, no invention, state gaps explicitly. Preserve diacritics.
+
+---
+
+## PROMPT P3 — Czech Republic: remaining volume brands
+
+Same task and rules as P1, Czech Republic, official locators only, full enumeration.
+
+Brands in scope: **Ford, Renault, Dacia, Peugeot, Citroën, Opel, Fiat (incl. Fiat Professional), Jeep, Volvo, Subaru**.
+
+Same two outputs per brand (TOTAL line + full table with the same columns as P1). For Stellantis brands (Peugeot/Citroën/Opel/Fiat/Jeep), note where several brands share one outlet — one row per brand-outlet combination is fine, but flag shared locations in a final short note.
+
+---
+
+## PROMPT P4 — Czech Republic: premium brands
+
+Same task and rules as P1, Czech Republic.
+
+Brands in scope: **Mercedes-Benz (passenger cars), BMW, MINI, Lexus, Land Rover, Jaguar, Porsche, Alfa Romeo, smart, Cadillac/other niche if an authorized network exists**.
+
+Same two outputs per brand (TOTAL line + full table, P1 columns).
+
+---
+
+## PROMPT P5 — Slovakia: FULL market sweep (highest structural priority)
+
+You are compiling an exact, dealer-level register of authorized car dealerships in SLOVAKIA. This is a full-market sweep: our database currently has essentially no independent Slovak dealers, so completeness matters more than speed. Work only from official brand dealer locators (e.g., skoda-auto.sk/apps/retailers, kia.com/sk/vyhladavanie-predajcov, hyundai.sk, toyota.sk, vw.sk, renault.sk, peugeot.sk, dacia.sk, suzuki.sk, mazda.sk...).
+
+Brands in scope (all): **Škoda, Volkswagen (incl. užitkové/commercial), Audi, SEAT/CUPRA, Toyota, Hyundai, Kia, Renault, Dacia, Peugeot, Citroën, Opel, Ford, Suzuki, Mazda, Mercedes-Benz, BMW, MINI, Volvo, Nissan, Honda, Mitsubishi, Subaru, MG, BYD, Omoda/Jaecoo, and any other Chinese brand active in SK**.
+
+For EACH brand output:
+1. `TOTAL <Brand> SK: <n> sales outlets, <m> service-only (source URL, accessed <date>)`
+2. Full outlet table:
+
+| Dealer name | Legal company | Street | Postal code + City | New-car sales (Y/N) | Service (Y/N) | Source URL |
+
+This is a large task — if you must prioritize, do brands in this order: Škoda, Kia, Hyundai, Toyota, VW, Renault/Dacia, MG, BYD, then the rest, and state clearly which brands you did not complete. Preserve Slovak diacritics. Official sources only; no invention.
+
+---
+
+## PROMPT P6 — Switzerland: volume & Asian brands
+
+You are compiling an exact, dealer-level register of authorized NEW-CAR SALES dealerships in SWITZERLAND (all language regions — enumerate German, French and Italian Switzerland completely, not just the German part). Official brand locators only (e.g., toyota.ch, hyundai.ch, kia.ch, mercedes-benz.ch, bmw.ch, mgmotor.eu/de-ch, byd.com/ch, honda.ch, mitsubishi-motors.ch, suzuki.ch, mazda.ch).
+
+Brands in scope: **Toyota, Hyundai, Kia, Mercedes-Benz, BMW, MINI, MG, BYD, Honda, Mitsubishi, Suzuki, Mazda, Nissan, Volvo**.
+
+For EACH brand output:
+1. `TOTAL <Brand> CH: <n> sales outlets, <m> service-only (source URL, accessed <date>)`
+2. Full outlet table:
+
+| Dealer name | Legal company | Street | Postal code + City | Canton | New-car sales (Y/N) | Service (Y/N) | Source URL |
+
+Note: Swiss brand networks often distinguish "Vertretung/Händler" (sales) from "Servicepartner" (service-only) — capture this distinction precisely; it is the core purpose of this research. No invention; state gaps.
+
+---
+
+## PROMPT P7 — Switzerland: Stellantis, Renault group & remaining
+
+Same task and rules as P6, Switzerland, all language regions.
+
+Brands in scope: **Renault, Dacia, Alpine, Peugeot, Citroën, Opel, Fiat, Jeep, Ford, Subaru, SEAT/CUPRA (non-AMAG partners if any), Land Rover/Jaguar, Lexus, plus Omoda/Jaecoo and other Chinese brands active in CH**.
+
+Same two outputs per brand (TOTAL line + full table with P6 columns incl. Canton).
+
+---
+
+## Quality bar (applies to every prompt)
+- Official locator/importer sources ONLY. If you had to use anything else, mark that row with `(secondary source)`.
+- Never invent an outlet. Never round counts. "Enumerated 41 of 49 shown" is a good answer.
+- Sales vs service-only distinction is the single most important field.
+- Keep diacritics (ě š č ř ž ľ ô ä ü é...) exactly.
+- Full tables, no truncation with "...and more".

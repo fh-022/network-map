@@ -1,0 +1,4 @@
+Run from inside this folder:
+  python3 prep_v5.py ../data-pipeline/CZ_SK_CH_Dealership_Overview_v3_merged_with_research_status.xlsx
+  python3 build_v5.py
+Output: dealer_network_platform.html (copy to package root to replace the shipped one).

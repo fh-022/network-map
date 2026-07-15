@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dealer Network Platform — CZ · SK · CH</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<style>
+:root{
+ --ink:#1c2b36;--soft:#5f7382;--line:rgba(28,43,54,.10);
+ --accent:#008CC8;--accent-dark:#006E9E;--accent-soft:rgba(0,140,200,.10);
+ --warn:#c07a1e;--danger:#b23a2a;--ok:#2e8b57;
+ --glass:rgba(255,255,255,.62);--blur:22px;
+ --shadow:0 8px 30px rgba(14,40,60,.16),0 1.5px 4px rgba(14,40,60,.10);--r:18px;
+}
+body[data-glass="1"]{--glass:rgba(255,255,255,.82);--blur:10px}
+body[data-glass="3"]{--glass:rgba(255,255,255,.45);--blur:30px}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;font-family:"Segoe UI",system-ui,-apple-system,sans-serif;color:var(--ink);font-size:13.5px;overflow:hidden}
+#map{position:absolute;inset:0;background:#dde5ea}
+.card{background:var(--glass);backdrop-filter:blur(var(--blur)) saturate(1.25);-webkit-backdrop-filter:blur(var(--blur)) saturate(1.25);
+ border-radius:var(--r);box-shadow:var(--shadow);border:1px solid rgba(255,255,255,.55)}
+/* ---- tooltips ---- */
+[data-tip]{position:relative;cursor:help}
+[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 6px);z-index:3000;
+ background:#233543;color:#fff;font-size:11px;font-weight:400;letter-spacing:0;text-transform:none;
+ padding:7px 10px;border-radius:8px;width:max-content;max-width:230px;line-height:1.45;box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:none}
+.qi{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;border-radius:50%;
+ background:rgba(28,43,54,.12);color:var(--soft);font-size:9.5px;font-weight:600;vertical-align:1px}
+/* ---- top bar ---- */
+#topbar{position:absolute;top:14px;left:14px;right:14px;z-index:1100;display:flex;gap:10px;align-items:center;pointer-events:none}
+#topbar>*{pointer-events:auto}
+#brand{padding:10px 15px;font-weight:650;font-size:13px;white-space:nowrap;display:flex;align-items:center;gap:8px}
+#brand .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.tbtn{padding:9px 13px;font-size:12.5px;cursor:pointer;display:flex;gap:7px;align-items:center;white-space:nowrap;user-select:none}
+.tbtn:hover{color:var(--accent)}
+#caseBtn b{max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.spacer{margin-left:auto}
+/* ---- generic controls ---- */
+.chip{border:1px solid var(--line);background:rgba(255,255,255,.6);border-radius:13px;padding:3.5px 11px;cursor:pointer;font-size:12px;color:var(--soft);user-select:none;display:inline-block}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.chipset{display:flex;gap:5px;flex-wrap:wrap}
+select,input[type=text],input[type=number]{border:1px solid var(--line);border-radius:9px;padding:7px 9px;font-size:12.5px;background:rgba(255,255,255,.85);color:var(--ink)}
+select,input[type=text]{width:100%}
+input[type=range]{accent-color:var(--accent);width:100%}
+.sldr{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;margin:7px 0}
+.sldr .lab{font-size:11.8px;color:var(--soft)}
+.sldr .val{font-size:11.8px;color:var(--ink);font-weight:600;min-width:52px;text-align:right}
+.sldr input{grid-column:1/3}
+.toggle{display:flex;align-items:center;justify-content:space-between;padding:5.5px 0;font-size:12.5px;gap:8px}
+.sw{position:relative;width:34px;height:19px;flex:none}
+.sw input{opacity:0;width:0;height:0}
+.sl{position:absolute;inset:0;background:#c3cfd8;border-radius:19px;cursor:pointer;transition:.15s}
+.sl:before{content:"";position:absolute;height:15px;width:15px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.15s}
+.sw input:checked+.sl{background:var(--accent)}
+.sw input:checked+.sl:before{transform:translateX(15px)}
+button.btn{border:1px solid var(--line);background:rgba(255,255,255,.85);border-radius:10px;padding:7px 12px;font-size:12px;cursor:pointer;color:var(--ink)}
+button.btn:hover{border-color:var(--accent);color:var(--accent)}
+button.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.btn.primary:hover{background:var(--accent-dark);color:#fff}
+.btnrow{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.hint{font-size:11px;color:var(--soft);margin-top:5px;line-height:1.5}
+/* ---- left panel ---- */
+#panel{position:absolute;top:70px;left:14px;bottom:14px;width:316px;z-index:1050;display:flex;flex-direction:column;transition:transform .25s}
+#panel.hidden{transform:translateX(-346px)}
+#seg{display:flex;padding:6px;gap:4px}
+#seg div{flex:1;text-align:center;padding:8px 4px;border-radius:11px;cursor:pointer;font-size:12.5px;color:var(--soft)}
+#seg div.on{background:var(--accent);color:#fff;font-weight:600}
+#pbody{flex:1;overflow-y:auto;padding:4px 14px 14px;margin-top:6px}
+#pbody::-webkit-scrollbar,#drawer::-webkit-scrollbar,#dirWrap::-webkit-scrollbar{width:8px}
+#pbody::-webkit-scrollbar-thumb,#drawer::-webkit-scrollbar-thumb,#dirWrap::-webkit-scrollbar-thumb{background:#c2ced7;border-radius:4px}
+.sec{margin-bottom:16px}
+.sec h2{font-size:10.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--soft);margin-bottom:7px;font-weight:650;display:flex;gap:6px;align-items:center}
+.sec h2 .aln{margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0}
+.aln a{color:var(--accent);cursor:pointer;font-size:10.5px;margin-left:6px;text-decoration:none}
+.lens{border-radius:9px;padding:2px 9px;font-size:11.5px;cursor:pointer;background:#EDF2F5;color:#43535F;font-weight:600}
+.lens.on{background:var(--accent);color:#fff}
+.fst{display:inline-block;border-radius:8px;padding:1px 7px;font-size:10.5px;font-weight:700;color:#fff;margin-right:3px}
+.fnrow{display:flex;align-items:center;gap:6px;margin-top:4px}
+.fnrow select{flex:1;font-size:11px;padding:2px}
+.fbadge{background:var(--accent);color:#fff;border-radius:9px;font-size:10px;padding:1px 7px;margin-left:6px;font-weight:700;vertical-align:1px}
+.fbadge:empty{display:none}
+#activeChips .chip{background:#fff;border:1px solid var(--accent);color:var(--accent-dark);font-size:11px}
+#activeChips .chip.reset{background:var(--accent);color:#fff}
+.kpiGuide{font-size:11.5px;line-height:1.55;color:#43535F;background:#F2F8FB;border-radius:9px;padding:9px 11px;margin-top:6px}
+.kpiGuide b{color:var(--accent-dark)}
+#counter{margin:2px 0 12px;background:var(--accent-soft);color:var(--accent-dark);border-radius:10px;padding:7px 11px;font-weight:600;font-size:12.2px}
+.multi{border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.75);max-height:150px;overflow-y:auto;padding:4px}
+.multi .opt{display:flex;align-items:center;gap:7px;padding:3.5px 6px;border-radius:7px;cursor:pointer;font-size:12.2px}
+.multi .opt:hover{background:var(--accent-soft)}
+.multi .mk{font-size:9.5px;font-weight:700;color:#fff;border-radius:4px;padding:1px 4px}
+.multi .cnt{margin-left:auto;color:var(--soft);font-size:10.5px}
+.multi .sub{font-size:10px;font-weight:700;color:var(--soft);letter-spacing:.6px;padding:5px 6px 2px}
+details.more{border-top:1px dashed var(--line);padding-top:8px}
+details.more summary{cursor:pointer;font-size:12px;color:var(--accent);list-style:none;user-select:none}
+details.more summary::before{content:'▸ '}details.more[open] summary::before{content:'▾ '}
+/* ---- drawer ---- */
+#drawer{position:absolute;top:70px;right:14px;bottom:190px;width:312px;z-index:1050;padding:14px;overflow-y:auto;display:none}
+#drawer.on{display:block}
+#drawer h2{font-size:12.5px;margin-bottom:7px;display:flex;align-items:center;gap:6px}
+#drawer h2 .aln{margin-left:auto;font-weight:400}
+.pRow{display:flex;align-items:center;gap:8px;padding:7px 6px;border-radius:10px;cursor:pointer;font-size:12.3px;border:1px solid transparent}
+.pRow:hover{background:var(--accent-soft)}
+.pRow.sel{border-color:var(--accent);background:var(--accent-soft)}
+.pRow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pRow .st{font-size:10px;border-radius:5px;padding:1px 6px;font-weight:600}
+.st.open{background:#eef2f5;color:var(--soft);border:1px dashed #b8c4cd}
+.st.short{background:#fdf3e3;color:#8a5a13}
+.st.assigned{background:#e2f3ea;color:#1e6b45}
+.pRow .pot{color:var(--soft);font-size:11px;white-space:nowrap}
+.cRow{padding:8px;border:1px solid var(--line);border-radius:11px;margin-bottom:7px;font-size:12.2px;background:rgba(255,255,255,.6)}
+.cRow .top{display:flex;gap:6px;align-items:baseline}
+.cRow .score{margin-left:auto;font-weight:700;color:var(--accent-dark)}
+.cRow .meta{color:var(--soft);font-size:11px;margin:3px 0}
+.cRow .acts{display:flex;gap:5px;margin-top:5px}
+.cRow .acts button{font-size:11px;padding:3px 8px}
+.cRow.primary{border-color:var(--accent);background:var(--accent-soft)}
+.stats{display:flex;gap:10px;font-size:11px;color:var(--soft);border-top:1px dashed var(--line);margin-top:8px;padding-top:8px}
+.stats b{color:var(--ink)}
+.bk{cursor:pointer;color:var(--accent);font-size:12px;margin-bottom:6px;display:inline-block}
+/* ---- analysis card ---- */
+#ana{position:absolute;bottom:14px;right:14px;z-index:1046;width:312px;padding:13px 16px}
+#ana h4{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--soft);display:flex;gap:6px;align-items:center;font-weight:650}
+#ana h4 .mini{margin-left:auto;cursor:pointer;font-weight:400;color:var(--soft)}
+#ana .big{font-size:26px;font-weight:650;color:var(--accent-dark);line-height:1.15}
+#ana .big small{font-size:11.5px;color:var(--soft);font-weight:400}
+#ana table{width:100%;font-size:11.5px;margin-top:5px;border-collapse:collapse}
+#ana td{padding:2.5px 0;border-bottom:1px dashed var(--line)}
+#ana td:last-child{text-align:right;font-weight:600}
+#ana .cmp td{color:#4a7ba3}
+#ana select{margin-top:7px;font-size:11.5px;padding:5px 7px}
+#ana.min .bd{display:none}
+#anaWarn{cursor:pointer;color:var(--warn);font-size:11px}
+/* ---- markers ---- */
+.pin{width:13px;height:13px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25),0 1px 3px rgba(0,0,0,.22)}
+.pin.ghost{opacity:.30;filter:grayscale(.9);box-shadow:none;border-color:rgba(255,255,255,.5)}
+.pin.locked{box-shadow:0 0 0 3px #c9a227,0 1px 3px rgba(0,0,0,.3)}
+.plc{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+ font-size:10px;font-weight:700;color:#fff;box-shadow:0 1px 5px rgba(0,0,0,.3)}
+.plc.open{background:rgba(0,140,200,.14);border:2.5px dashed var(--accent);color:var(--accent)}
+.plc.short{background:#fff;border:2.5px solid var(--warn);color:var(--warn)}
+.plc.assigned{background:var(--accent);border:2.5px solid #fff}
+.plc.gf{background:var(--ok);border:2.5px solid #fff}
+.plc.sel{transform:scale(1.25);box-shadow:0 0 0 4px rgba(0,140,200,.3),0 2px 8px rgba(0,0,0,.35)}
+.plc.cmp{background:#fff;border:2.5px dashed #7a8fa3;color:#7a8fa3}
+.citydot{background:rgba(30,40,51,.05);border:1.4px solid rgba(30,40,51,.5);border-radius:50%}
+.citylab{font-size:10px;color:#3c4a56;white-space:nowrap;text-shadow:0 0 3px #fff,0 0 5px #fff;font-weight:600;transform:translate(10px,-6px)}
+body.dimmed .citydot{border-color:rgba(255,255,255,.8)}
+body.dimmed .citylab{color:#eef3f6;text-shadow:0 0 3px #000,0 0 5px #000}
+#legend{position:absolute;bottom:14px;left:340px;z-index:1040;padding:8px 13px;font-size:11.5px;max-width:46vw}
+#legend .li{display:inline-flex;align-items:center;gap:5px;margin-right:11px}
+#legend .x{cursor:pointer;color:var(--soft)}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;box-shadow:0 0 0 1px rgba(0,0,0,.12)}
+#driveinfo{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:1044;padding:9px 13px;font-size:11.8px;display:none;line-height:1.6}
+#driveinfo.on{display:block}
+#driveinfo .b{display:inline-block;width:22px;border-top:2.5px solid;margin-right:5px;vertical-align:middle}
+#planbar{position:absolute;top:70px;left:50%;transform:translateX(-50%);z-index:1060;background:rgba(253,243,227,.92);backdrop-filter:blur(10px);border:1px solid var(--warn);border-radius:12px;padding:8px 14px;font-size:12.3px;color:#7a4d0f;display:none}
+#planbar.on{display:block}
+.leaflet-popup-content-wrapper{border-radius:13px}
+.leaflet-popup-content{font-size:12.5px;line-height:1.5;margin:12px 14px}
+.leaflet-popup-content h3{font-size:13.5px;margin-bottom:3px;color:var(--accent-dark)}
+.leaflet-popup-content .meta{color:var(--soft);font-size:11.5px;margin-bottom:6px}
+.tag{display:inline-block;background:var(--accent-soft);color:var(--accent-dark);border-radius:5px;padding:1px 7px;font-size:11px;margin:1px 2px 1px 0}
+.tag.cn{background:#fbe9e5;color:#a13c22}
+.popbtns{margin-top:8px;display:flex;gap:5px;flex-wrap:wrap}
+.popbtns button{font-size:11.5px;padding:3px 9px;border:1px solid var(--line);background:#fff;border-radius:7px;cursor:pointer}
+/* ---- sheets & dialogs ---- */
+.sheet{position:absolute;inset:60px 40px 26px;z-index:1200;padding:20px;display:none;flex-direction:column}
+.sheet.on{display:flex}
+.sheet h2{font-size:15px;margin-bottom:2px}
+.sheet .sub{font-size:11.5px;color:var(--soft);margin-bottom:10px}
+.sheet .x{position:absolute;top:14px;right:18px;cursor:pointer;font-size:16px;color:var(--soft)}
+#dirBar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+#dirTabs{display:flex;gap:4px}
+#dirTabs .chip{font-size:12.5px;padding:5px 14px}
+#dirWrap{flex:1;overflow:auto;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.9)}
+table.db{width:100%;border-collapse:collapse;font-size:12.2px}
+table.db th{position:sticky;top:0;background:#f1f5f8;text-align:left;padding:8px;border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;z-index:2}
+table.db td{padding:6.5px 8px;border-bottom:1px solid #eef2f5;vertical-align:top}
+table.db select,table.db input{border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:12px;background:#fff;width:auto}
+table.db .act{cursor:pointer;padding:0 4px;opacity:.75}
+table.db .act:hover{opacity:1}
+table.db tr.excl td{opacity:.45}
+.mkb{font-size:9.5px;font-weight:700;color:#fff;border-radius:4px;padding:1px 5px}
+#dirTotals{font-size:11.5px;color:var(--soft);margin-top:8px}
+dialog{border:none;border-radius:18px;padding:20px;width:360px;box-shadow:0 14px 44px rgba(0,0,0,.28);background:rgba(255,255,255,.95);backdrop-filter:blur(18px)}
+dialog::backdrop{background:rgba(16,28,38,.42)}
+dialog h3{font-size:14px;margin-bottom:10px;position:relative;padding-right:22px}
+.dlgX{position:absolute;top:-2px;right:0;cursor:pointer;font-size:13px;color:var(--soft);
+ width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:50%}
+.dlgX:hover{background:var(--accent-soft);color:var(--ink)}
+#uiDlg{width:400px}
+#uiOk.danger{background:var(--danger);border-color:var(--danger)}
+#cropOv{position:absolute;z-index:1500;border:2px dashed #008CC8;box-shadow:0 0 0 100vmax rgba(16,28,38,.45);cursor:move;display:none}
+#cropOv .hnd{position:absolute;width:14px;height:14px;background:#fff;border:2px solid #008CC8;border-radius:50%}
+#cropOv .nw{left:-8px;top:-8px;cursor:nwse-resize}#cropOv .ne{right:-8px;top:-8px;cursor:nesw-resize}
+#cropOv .sw{left:-8px;bottom:-8px;cursor:nesw-resize}#cropOv .se{right:-8px;bottom:-8px;cursor:nwse-resize}
+#cropBar{position:absolute;top:70px;left:50%;transform:translateX(-50%);z-index:1600;padding:9px 14px;display:none;gap:8px;align-items:center;font-size:12.3px}
+#cropBar.on,#cropOv.on{display:flex}
+#cropOv.on{display:block}
+#exDlg{width:680px}
+#exGrid{display:grid;grid-template-columns:230px 1fr;gap:14px}
+#exPresets{border:1px solid var(--line);border-radius:11px;padding:6px;max-height:330px;overflow-y:auto;background:rgba(255,255,255,.7)}
+.exP{display:flex;align-items:center;gap:7px;padding:6px 7px;border-radius:8px;cursor:pointer;font-size:12.3px;border:1px solid transparent}
+.exP:hover{background:var(--accent-soft)}
+.exP.sel{border-color:var(--accent);background:var(--accent-soft)}
+.exP .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.exP .x{color:var(--soft);cursor:pointer}
+.exP .x:hover{color:var(--danger)}
+#exOpts .toggle{padding:3px 0}
+.exSec{border:1px solid var(--line);border-radius:11px;padding:8px 11px;margin-bottom:8px;background:rgba(255,255,255,.55)}
+.exSec h5{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--soft);margin-bottom:5px;font-weight:650}
+.exRow2{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+dialog{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);margin:0;max-height:88vh;overflow-y:auto}
+#exOpts label.small{margin:6px 0 2px}
+#exHint{font-size:10.5px;color:var(--soft);margin-top:8px;line-height:1.5}
+dialog .btnrow{justify-content:flex-end;margin-top:14px}
+label.small{font-size:11.5px;color:var(--soft);display:block;margin:8px 0 3px}
+.menu{position:absolute;z-index:1300;display:none;flex-direction:column;padding:6px;min-width:200px}
+.menu .tbtn{padding:8px 11px;border-radius:9px}
+.menu .tbtn:hover{background:var(--accent-soft)}
+.menu hr{border:none;border-top:1px solid var(--line);margin:4px 0}
+</style>
+</head>
+<body data-glass="2">
+<div id="map"></div>
+
+<div id="topbar">
+  <div class="card" id="brand"><span class="dot"></span>Dealer Network Platform</div>
+  <div class="card tbtn" id="caseBtn">Case: <b id="caseName">—</b> ▾</div>
+  <div class="card" id="lensBar" style="display:flex;gap:4px;align-items:center;padding:5px 9px" data-tip="Brand lens: colors the funnel, scopes the KPI's existing network to contracted dealers of this brand"></div>
+  <div class="spacer"></div>
+  <div class="card tbtn" id="dirBtn">☰ Directory</div>
+  <div class="card tbtn" id="exBtn">⭳ Export</div>
+  <div class="card tbtn" id="setBtn">⚙ Settings</div>
+  <div class="card tbtn" id="wsBtn">Workspace ▾</div>
+  <div class="card tbtn" id="panelBtn" data-tip="Show / hide the side panel">◧</div>
+</div>
+
+<div id="panel" class="card">
+  <div id="seg"><div class="on" data-m="0">Filter</div><div data-m="1">Layers</div><div data-m="2">Plan</div></div>
+  <div id="pbody">
+    <div id="counter"></div>
+    <div id="activeChips" class="chipset" style="margin:-6px 0 10px;display:none"></div>
+    <!-- ================= FILTER ================= -->
+    <div id="m0">
+      <div class="sec"><input type="text" id="q" placeholder="Search group, city, brand…"></div>
+      <div class="sec"><h2>Market <span class="qi" data-tip="Markets of the current case. Click to show/hide a market's dealers.">?</span></h2><div class="chipset" id="fMarket"></div></div>
+      <div class="sec"><h2>Dealer type <span class="qi" data-tip="Dealer groups (with a Directory profile) vs. independent single-site dealers.">?</span></h2><div class="chipset" id="fType"></div></div>
+      <div class="sec"><h2>Chinese brands <span class="qi" data-tip="Whether the dealer group already sells Chinese brands (from the source file).">?</span></h2><div class="chipset" id="fCn"></div></div>
+      <div class="sec"><h2>Group priority <span class="qi" data-tip="Your own A/B/C rating per group — set it in the Directory.">?</span></h2><div class="chipset" id="fPrio"></div></div>
+      <div class="sec"><h2>Color markers by</h2>
+        <select id="colorBy">
+          <option value="market">Market</option><option value="own">Ownership</option>
+          <option value="cn">Chinese exposure</option><option value="prio">Group priority</option><option value="funnel">Funnel stage (lens brand)</option>
+        </select></div>
+      <details class="more"><summary>Ownership <span class="fbadge" id="bOwn"></span></summary>
+        <div class="sec" style="margin-top:8px"><span class="aln" id="alnOwn"></span><div class="chipset" id="fOwn"></div></div>
+      </details>
+      <details class="more"><summary>Brands at location <span class="fbadge" id="bBrand"></span></summary>
+        <div class="sec" style="margin-top:8px"><span class="aln" id="alnBrand"></span>
+          <input type="text" id="brandQ" placeholder="Filter list…" style="margin:5px 0">
+          <div class="multi" id="fBrand"></div></div>
+      </details>
+      <details class="more"><summary>Dealer group <span class="fbadge" id="bGroup"></span></summary>
+        <div class="sec" style="margin-top:8px"><span class="aln" id="alnGroup"></span>
+          <input type="text" id="groupQ" placeholder="Filter list…" style="margin:5px 0">
+          <div class="multi" id="fGroup"></div></div>
+      </details>
+      <div class="btnrow"><button class="btn primary" id="csvLoc" data-tip="Download the currently filtered locations as CSV">Filtered → CSV</button></div>
+    </div>
+    <!-- ================= LAYERS ================= -->
+    <div id="m1" style="display:none">
+      <div class="sec"><h2>Density <span class="qi" data-tip="Kernel-density surfaces. Intensity = strength of the coloring, Smoothing = radius over which points blur together.">?</span></h2>
+        <div class="toggle"><span>Dealer density (filtered)</span><label class="sw"><input type="checkbox" id="tHeat"><span class="sl"></span></label></div>
+        <div id="heatCtl" style="display:none">
+          <div class="sldr"><span class="lab">Intensity</span><span class="val" id="hIntVal">80%</span><input type="range" id="hInt" min="20" max="100" value="80" step="5"></div>
+          <div class="sldr"><span class="lab">Smoothing</span><span class="val" id="hRadVal">10 km</span><input type="range" id="hRad" min="3" max="25" value="10" step="1"></div></div>
+        <div class="toggle"><span>Population density</span><label class="sw"><input type="checkbox" id="tPop"><span class="sl"></span></label></div>
+        <div id="popCtl" style="display:none">
+          <div class="sldr"><span class="lab">Intensity</span><span class="val" id="pIntVal">85%</span><input type="range" id="pInt" min="20" max="100" value="85" step="5"></div>
+          <div class="sldr"><span class="lab">Smoothing</span><span class="val" id="pRadVal">8 km</span><input type="range" id="pRad" min="3" max="25" value="8" step="1"></div>
+          <div class="hint">586 municipalities ≥5k, official census figures, scaled to country totals.</div></div>
+      </div>
+      <div class="sec"><h2>Demand model <span class="qi" data-tip="What 'demand' means in every % and every optimizer run. Population is always the base.">?</span></h2>
+        <div class="toggle"><span>× Regional motorization</span><label class="sw"><input type="checkbox" id="tWeight"><span class="sl"></span></label></div>
+        <div class="hint">Cars/1000 inh. per canton (BFS, sourced) and kraj (estimated). Affects the population layer, coverage %, and the optimizer.</div>
+      </div>
+      <div class="sec"><h2>Coverage <span class="qi" data-tip="All coverage visuals follow the ⏱ threshold in the Analysis card and its 'Measure' selection.">?</span></h2>
+        <div class="toggle"><span>Coverage gaps (uncovered)</span><label class="sw"><input type="checkbox" id="tWhite"><span class="sl"></span></label></div>
+        <div class="toggle"><span>Drive-time area on hover</span><label class="sw"><input type="checkbox" id="tDrive"><span class="sl"></span></label></div>
+        <div class="toggle"><span>Fixed-radius circles</span><label class="sw"><input type="checkbox" id="tCatch"><span class="sl"></span></label></div>
+        <div class="sldr" id="radRow" style="display:none"><span class="lab">Circle radius</span><span class="val" id="radVal">30 km</span><input type="range" id="radius" min="10" max="60" value="30" step="5"></div>
+      </div>
+      <div class="sec"><h2>Reference</h2>
+        <div class="toggle"><span>Major cities</span><label class="sw"><input type="checkbox" id="tCities" checked><span class="sl"></span></label></div>
+        <div class="toggle"><span>Road network (model) <span class="qi" data-tip="The synthetic network the drive-time engine computes on — real corridors, modeled speeds.">?</span></span><label class="sw"><input type="checkbox" id="tGraph"><span class="sl"></span></label></div>
+      </div>
+    </div>
+    <!-- ================= PLAN ================= -->
+    <div id="m2" style="display:none">
+      <div class="sec"><h2>Scenario</h2>
+        <div style="display:flex;gap:6px"><select id="scSelect" style="flex:1"></select><button class="btn" id="scMenu" data-tip="New, rename, duplicate, delete">⋯</button></div></div>
+      <div class="sec"><h2>1 · Define places <span class="qi" data-tip="A place is a target position with a market area. Add places manually or let the optimizer propose them — dealers are assigned in step 2.">?</span></h2>
+        <div class="toggle"><span><b>Click map to add place</b></span><label class="sw"><input type="checkbox" id="tPlan"><span class="sl"></span></label></div>
+        <label class="small">Propose places automatically</label>
+        <div style="display:flex;gap:6px;margin-bottom:4px">
+          <select id="oSrc" style="flex:1" data-tip="Where proposed places may be positioned"><option value="towns">Snap to towns</option><option value="dealers">At existing dealer sites</option></select>
+          <select id="oObj" style="flex:1"><option value="maxcov">Best N places</option><option value="minsites">Places for target %</option></select></div>
+        <div class="sldr" id="oNRow"><span class="lab">N (number of places)</span><span class="val" id="oNVal">8</span><input type="range" id="oN" min="1" max="30" value="8"></div>
+        <div class="sldr" id="oPctRow" style="display:none"><span class="lab">Target coverage</span><span class="val" id="oPctVal">80%</span><input type="range" id="oPct" min="20" max="100" value="80" step="5"></div>
+        <div class="sldr"><span class="lab">Min spacing between places</span><span class="val" id="oSpaceVal">off</span><input type="range" id="oSpace" min="0" max="60" value="0" step="5"></div>
+        <div class="sldr"><span class="lab">Min demand per place</span><span class="val" id="oMinDVal">off</span><input type="range" id="oMinD" min="0" max="500" value="0" step="25"></div>
+        <div class="toggle"><span>Live re-run while dragging <span class="qi" data-tip="Re-runs the proposal automatically when you move a slider — feel what each constraint does.">?</span></span><label class="sw"><input type="checkbox" id="oLive"><span class="sl"></span></label></div>
+        <div class="btnrow"><button class="btn primary" id="oRun" style="flex:1">▶ Propose places</button></div>
+        <div class="hint">📌 Locked partners always become assigned places first. Existing places are kept; proposals fill up around them.</div>
+      </div>
+      <div class="sec"><h2>2 · Assign dealers <span class="qi" data-tip="Candidates per place = filtered dealers within the ⏱ threshold, ranked by fit. Constraints below narrow the candidate pool.">?</span></h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <select id="aCn" data-tip="Chinese-brand exposure"><option value="ignore">CN: ignore</option><option value="require">CN: require</option><option value="exclude">CN: exclude</option></select>
+          <select id="aPrio" data-tip="Minimum group priority from the Directory"><option value="any">Prio: any</option><option value="AB">Prio: A or B</option><option value="A">Prio: A only</option></select>
+          <select id="aMust" data-tip="Group must already sell this brand"><option value="">Must sell: —</option></select>
+          <select id="aMustNot" data-tip="Group must NOT sell this brand"><option value="">Not sell: —</option></select></div>
+        <div class="sldr"><span class="lab">Max places per group</span><span class="val" id="aMaxGVal">off</span><input type="range" id="aMaxG" min="0" max="6" value="0"></div>
+        <div class="btnrow">
+          <button class="btn primary" id="aSuggest" style="flex:1" data-tip="Fills every place with its best candidate as a suggestion">Suggest dealers</button>
+          <button class="btn" id="aAccept" data-tip="Turn all suggestions into assignments">Accept all</button></div>
+      </div>
+      <div class="sec"><h2>Export</h2>
+        <div class="btnrow"><button class="btn" id="csvPlan">Places → CSV</button></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="drawer" class="card"></div>
+
+<!-- Analysis card -->
+<div id="ana" class="card">
+ <h4>Analysis <span id="anaWarn" data-tip="Drive times and coverage are model estimates (±20-30%). Click for the full disclaimer.">⚠ est.</span><span class="mini" onclick="$('ana').classList.toggle('min')">▾</span></h4>
+ <div class="bd">
+  <div class="sldr"><span class="lab">Drive-time threshold</span><span class="val" id="tTv">30 min</span><input type="range" id="tT" min="5" max="90" value="30" step="5"></div>
+  <div class="big"><span id="kpiPct">–</span><small id="kpiSub"></small></div>
+  <table id="kpiTbl"></table>
+  <div id="kpiCtx" style="font-size:10.5px;color:var(--accent-dark);font-weight:600;margin:2px 0 1px"></div>
+  <select id="kpiMeasure" data-tip="Whose coverage the % describes">
+   <option value="scenario">Measure: planned network</option>
+   <option value="existing">Measure: existing dealers (filtered)</option>
+   <option value="both">Measure: both combined</option>
+  </select>
+  <select id="cmpSelect" data-tip="Show a second scenario side by side"><option value="-1">Compare: none</option></select>
+  <div id="fragBtn" class="hint" style="margin-top:9px;cursor:pointer;color:var(--accent-dark);font-weight:600">📈 Coverage build-up &amp; market structure &rsaquo;</div>
+ </div>
+</div>
+
+<div id="legend" class="card"></div>
+<div id="driveinfo" class="card"></div>
+<div id="cropOv"><div class="hnd nw"></div><div class="hnd ne"></div><div class="hnd sw"></div><div class="hnd se"></div></div>
+<div id="cropBar" class="card"><b>Frame the slide.</b> Drag to move, corners to resize.
+ <select id="cropAsp" style="width:auto"><option value="0">Free aspect</option><option value="2.366">Slide-wide (12.2 : 5.15)</option><option value="1.7778">16 : 9</option></select>
+ <button class="btn" id="cropCancel">Cancel</button><button class="btn primary" id="cropApply">Apply frame</button></div>
+<div id="planbar"><b>Placing mode.</b> Click the map to add a place.</div>
+
+<!-- Directory sheet -->
+<div class="sheet card" id="dirSheet">
+  <span class="x" onclick="$('dirSheet').classList.remove('on')">✕</span>
+  <h2>Directory</h2>
+  <div class="sub">All groups and locations from the source file. Priority and Notes are yours; they live in the workspace, never in the Excel.</div>
+  <div id="dirBar">
+    <div id="dirTabs"><span class="chip on" data-t="groups">Groups</span><span class="chip" data-t="locations">Locations</span></div>
+    <input type="text" id="dirQ" placeholder="Search…" style="width:220px">
+    <div class="chipset" id="dirMk"></div>
+    <span class="spacer"></span>
+    <button class="btn primary" id="dirAdd" data-tip="Add a custom group or location — stored in the workspace, exported with it">+ Add</button>
+    <button class="btn" id="dirApply" data-tip="Use the current Directory selection as the map's group filter">Apply as map filter</button>
+    <button class="btn" id="dirCsv">View → CSV</button>
+  </div>
+  <div id="dirWrap"></div>
+  <div id="dirTotals"></div>
+</div>
+
+<!-- dialogs -->
+<dialog id="exDlg">
+  <h3>Export to PowerPoint <span class="qi" data-tip="Generates a real .pptx: places, dealer dots, labels, legend and KPI are native editable shapes; basemap, coverage gaps and model-shaped areas are image layers. Colmobil master geometry (16:9).">?</span></h3>
+  <div id="exGrid">
+    <div>
+      <div class="hint" style="margin:0 0 5px">Presets — each ✓ becomes one slide</div>
+      <div id="exPresets"></div>
+      <div class="btnrow"><button class="btn" id="exNew">+ New preset</button></div>
+    </div>
+    <div id="exOpts">
+      <div class="exSec"><h5>Slide</h5>
+        <div class="exRow2"><span><label class="small" style="margin-top:0">Preset name</label><input type="text" id="exName"></span>
+        <span><label class="small" style="margin-top:0">Action title (auto if empty)</label><input type="text" id="exTitle" placeholder="auto"></span></div></div>
+      <div class="exSec"><h5>Frame — <b id="exFrameLbl" style="color:var(--accent-dark)">Current view</b> <span class="qi" data-tip="The map region this slide shows, saved with the preset (applies immediately, no Save needed). 'Current view' uses whatever the map shows at export time.">?</span></h5>
+        <div class="chipset">
+        <span class="chip" data-fr="view">Current view</span><span class="chip" data-fr="CZ">CZ</span>
+        <span class="chip" data-fr="SK">SK</span><span class="chip" data-fr="CH">CH</span><span class="chip" data-fr="AT">AT</span>
+        <span class="chip" data-fr="case">Case</span><span class="chip" data-fr="edit">✎ Adjust…</span></div></div>
+      <div class="exSec"><h5>Map content</h5>
+        <div class="toggle"><span>Basemap (real map image)</span><label class="sw"><input type="checkbox" id="exBase" checked><span class="sl"></span></label></div>
+        <div class="toggle"><span>Existing dealers (filtered)</span>
+          <select id="exDealers" style="width:auto"><option value="auto">auto</option><option value="shapes">shapes</option><option value="image">image</option><option value="off">off</option></select></div>
+        <div class="toggle"><span>Places</span><label class="sw"><input type="checkbox" id="exPlaces" checked><span class="sl"></span></label></div>
+        <div class="toggle"><span>Market areas</span>
+          <select id="exAreas" style="width:auto"><option value="off">off</option><option value="schematic">schematic (editable)</option><option value="model">model shape (image)</option></select></div></div>
+      <div class="exSec"><h5>Analysis layers <span class="qi" data-tip="Rendered exactly like on the map, exported as image layers.">?</span></h5>
+        <div class="exRow2">
+        <div class="toggle"><span>Coverage gaps</span><label class="sw"><input type="checkbox" id="exGaps"><span class="sl"></span></label></div>
+        <div class="toggle"><span>Dealer density</span><label class="sw"><input type="checkbox" id="exHeat"><span class="sl"></span></label></div>
+        <div class="toggle"><span>Population density</span><label class="sw"><input type="checkbox" id="exPop"><span class="sl"></span></label></div></div></div>
+      <div class="exSec"><h5>Place labels</h5>
+        <div class="exRow2">
+        <div class="toggle"><span>Style</span>
+          <select id="exLabStyle" style="width:auto"><option value="chip">White box (chip)</option><option value="shadow">White shadow (halo)</option><option value="outline">White outline</option><option value="plain">Plain</option></select></div>
+        <div class="toggle"><span>Size</span>
+          <select id="exLabSize" style="width:auto"><option value="S">Small</option><option value="M" selected>Medium</option><option value="L">Large</option></select></div></div>
+        <div class="hint" style="margin-top:2px">Text boxes auto-fit their text in PowerPoint (resize-to-fit, so they stay snug when you edit).</div></div>
+      <div class="exSec"><h5>Annotations</h5>
+        <div class="exRow2">
+        <div class="toggle"><span>City labels</span><label class="sw"><input type="checkbox" id="exCities"><span class="sl"></span></label></div>
+        <div class="toggle"><span>Legend</span><label class="sw"><input type="checkbox" id="exLegend" checked><span class="sl"></span></label></div>
+        <div class="toggle"><span>Coverage KPI box</span><label class="sw"><input type="checkbox" id="exKpi" checked><span class="sl"></span></label></div></div></div>
+      <div id="exHint">All changes save to the selected preset automatically. Colmobil CI, Assistant font, Folienmaster geometry. Places, labels, legend, KPI are editable PPT shapes; "auto" switches dealers to one image above 450 dots. Source line added automatically.</div>
+    </div>
+  </div>
+  <div class="btnrow"><span id="exStatus" class="hint" style="margin-right:auto"></span>
+    <button class="btn" id="exPng">PNG (flat)</button>
+    <button class="btn" id="exClose">Close</button>
+    <button class="btn primary" id="exGo">Export PPTX</button></div>
+</dialog>
+<dialog id="fragDlg" style="width:920px">
+  <h3 id="fragTitle">Coverage build-up</h3>
+  <div class="chipset" id="fragMode" style="margin-bottom:8px">
+    <span class="chip sel" data-m="cov">Scenario coverage</span>
+    <span class="chip" data-m="pop">Population fragmentation</span>
+  </div>
+  <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;flex-wrap:wrap">
+    <div id="covSelWrap" style="flex:1;min-width:280px">
+      <div class="hint" style="margin-bottom:3px">Scenarios to plot <span class="qi" data-tip="Places ordered by marginal coverage gain (greedy): each next point is the place adding the most on top of those before it. Curves use each scenario's own case markets and the current drive-time threshold.">?</span></div>
+      <div id="covSel" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    </div>
+    <span id="fragMkWrap" class="hint" style="display:none">Markets: <b id="fragMk"></b></span>
+    <span style="flex:0 0 auto;display:flex;gap:8px;align-items:center">
+      <label class="small" id="fragNLab" style="margin:0;display:none">Show top</label>
+      <select id="fragN" style="width:auto;display:none">
+        <option value="10">10</option><option value="20">20</option><option value="30" selected>30</option>
+        <option value="40">40</option><option value="50">50</option><option value="999">All</option></select>
+      <button class="btn" id="fragCsv">Excel</button>
+      <button class="btn primary" id="fragPpt">Export PPT slide</button></span>
+  </div>
+  <div id="fragChart" style="width:100%;height:420px"></div>
+  <div id="fragCaption" style="font-size:11px;color:#5B6B78;margin-top:4px"></div>
+  <table class="db" id="fragTable" style="margin-top:10px;font-size:11px"></table>
+</dialog>
+<dialog id="addDlg" style="width:420px">
+  <h3 id="adTitle">Add location</h3>
+  <div class="hint" style="margin:0 0 6px">Custom entries live in the workspace (exported/imported with it); the Excel stays untouched. They behave like any other entry: filters, candidates, optimizer, exports.</div>
+  <div id="adLocFields">
+    <label class="small">Location name *</label><input type="text" id="adName" placeholder="e.g. AMAG Altstetten">
+    <label class="small">Group (existing or new; empty = independent under own name)</label>
+    <input type="text" id="adGroup" list="adGroupList"><datalist id="adGroupList"></datalist>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <span><label class="small">Market</label><select id="adMarket"><option>CZ</option><option>SK</option><option>CH</option><option>AT</option></select></span>
+      <span><label class="small">Type</label><select id="adType"><option value="group">Dealer group</option><option value="independent">Independent</option></select></span></div>
+    <label class="small">Address</label><input type="text" id="adAddress">
+    <label class="small">Brands (comma-separated)</label><input type="text" id="adBrands" placeholder="Škoda, VW">
+    <label class="small">Position</label>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="text" id="adLat" placeholder="Lat" style="width:90px"><input type="text" id="adLon" placeholder="Lon" style="width:90px">
+      <button class="btn primary" id="adPick">📍 Pick on map</button></div>
+  </div>
+  <div id="adGrpFields" style="display:none">
+    <label class="small">Group name *</label><input type="text" id="agName">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <span><label class="small">Market</label><select id="agMarket"><option>CZ</option><option>SK</option><option>CH</option><option>AT</option></select></span>
+      <span><label class="small">Ownership</label><select id="agOwn"><option>Private / Family</option><option>International group</option><option>OEM-captive</option><option>Independent</option><option>Other</option></select></span></div>
+    <label class="small">Brand portfolio</label><input type="text" id="agBrands">
+    <div class="toggle" style="margin-top:4px"><span>Sells Chinese brands</span><label class="sw"><input type="checkbox" id="agCn"><span class="sl"></span></label></div>
+    <label class="small">Access / relationship</label><input type="text" id="agAccess">
+    <label class="small">Comment</label><input type="text" id="agComment">
+  </div>
+  <div class="btnrow"><button class="btn" id="adCancel">Cancel</button><button class="btn primary" id="adOk">Add</button></div>
+</dialog>
+<dialog id="uiDlg">
+  <h3 id="uiTitle">Confirm</h3>
+  <div id="uiMsg" class="hint" style="font-size:12.5px;margin:0 0 4px"></div>
+  <input type="text" id="uiInput" style="display:none;margin-top:8px">
+  <textarea id="uiArea" style="display:none;margin-top:8px;width:100%;min-height:110px;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:12.5px/1.5 'Segoe UI',system-ui;background:rgba(255,255,255,.9);color:var(--ink);resize:vertical"></textarea>
+  <div class="btnrow"><button class="btn" id="uiCancel">Cancel</button><button class="btn primary" id="uiOk">OK</button></div>
+</dialog>
+<dialog id="caseDlg">
+  <h3>Cases</h3>
+  <div id="caseList" style="max-height:190px;overflow:auto;margin-bottom:10px"></div>
+  <label class="small">New case name</label><input type="text" id="ncName" placeholder="e.g. CZ – Brand A workshop">
+  <label class="small">Markets</label><div class="chipset" id="ncMk"></div>
+  <label class="small">Brands (comma-separated)</label><input type="text" id="ncBrands" placeholder="Brand A, Brand B">
+  <div class="btnrow"><button class="btn" id="caseClose">Close</button><button class="btn primary" id="caseCreate">Create case</button></div>
+</dialog>
+
+<dialog id="setDlg">
+  <h3>Settings</h3>
+  <label class="small">Basemap</label><div class="chipset" id="baseSel"></div>
+  <div class="sldr"><span class="lab">Map dimming</span><span class="val" id="dimVal">0%</span><input type="range" id="dim" min="0" max="80" value="0" step="5"></div>
+  <label class="small">Glass effect</label>
+  <div class="chipset" id="glassSel"><span class="chip" data-g="1">Subtle</span><span class="chip on" data-g="2">Standard</span><span class="chip" data-g="3">Strong</span></div>
+  <hr style="border:none;border-top:1px solid var(--line);margin:12px 0">
+  <div class="hint" id="buildInfo"></div>
+  <div class="btnrow" style="justify-content:space-between">
+    <button class="btn" id="wsRestore" data-tip="Restore the automatic backup taken before the last delete / import / reset">Restore backup</button>
+    <button class="btn primary" onclick="$('setDlg').close()">Done</button></div>
+</dialog>
+
+<dialog id="discDlg">
+  <h3>Estimation disclaimer</h3>
+  <div class="hint" style="font-size:12px">
+  Drive times and coverage areas are model estimates on a synthetic road network (validated: 36/36 reference routes within ±30%, mean deviation ~10%), not routing-engine results. Demand: official census figures for 586 municipalities ≥5k (ČSÚ 2026, ŠÚSR, BFS), scaled to country totals; optional motorization weighting is sourced for CH and estimated for CZ/SK. Positions: district precision in metros, city centroid elsewhere. Use for directional network planning, not site-level decisions.</div>
+  <div class="btnrow"><button class="btn primary" onclick="$('discDlg').close()">OK</button></div>
+</dialog>
+
+<dialog id="scDlg">
+  <h3>Scenarios</h3>
+  <div id="scList" style="max-height:200px;overflow:auto;margin-bottom:8px"></div>
+  <div class="btnrow" style="justify-content:flex-start"><button class="btn" id="scNew">+ New scenario</button><span class="spacer"></span><button class="btn primary" onclick="$('scDlg').close()">Done</button></div>
+</dialog>
+
+<div class="card menu" id="wsMenu">
+  <div class="tbtn" id="wsExport">⭳ Export workspace (JSON)</div>
+  <div class="tbtn" id="wsImport">⭱ Import workspace</div>
+  <hr><div class="tbtn" id="wsReset" style="color:var(--danger)">Reset workspace</div>
+  <input type="file" id="wsFile" accept=".json" style="display:none">
+</div>
+<!-- __SCRIPT__ -->
+</body>
+</html>
